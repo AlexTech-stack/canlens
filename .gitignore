@@ -1,0 +1,23 @@
+# Corpus data is fetched on demand and never committed -- the upstream
+# bucket is ~299 GB; see README "Corpus".
+/data/
+*.zst
+*.blf
+*.asc
+*.pcap
+database.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/

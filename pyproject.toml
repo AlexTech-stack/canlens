@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "canlens"
+version = "0.0.1"
+description = "Corpus-scale reverse engineering of automotive CAN bus traces"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Alexander Günther" }]
+keywords = ["can", "canbus", "automotive", "reverse-engineering", "dbc", "openpilot"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = []
+
+[project.optional-dependencies]
+# Decoding openpilot rlog.zst (zstd-compressed capnp cereal messages).
+decode = ["zstandard>=0.22", "pycapnp>=2.0"]
+# Vectorised bit-matrix work in the inference engine.
+fast = ["numpy>=1.26"]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+
+[project.scripts]
+canlens = "canlens.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
