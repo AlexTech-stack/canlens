@@ -11,6 +11,7 @@ layer up.
 
 from .bits import (
     BitKind,
+    BitOrder,
     BitProfile,
     bit_entropy,
     bit_matrix,
@@ -23,6 +24,7 @@ from .trace import MessageProfile, TraceProfile, analyze_frames, analyze_segment
 
 __all__ = [
     "BitKind",
+    "BitOrder",
     "BitProfile",
     "Cadence",
     "MessageProfile",

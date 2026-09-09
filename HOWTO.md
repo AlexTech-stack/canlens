@@ -192,6 +192,50 @@ Rows are sorted by payload entropy, so **the top of the list is where to start
 looking**. A message with near-zero entropy has nothing in it to reverse
 engineer, however often it arrives.
 
+### The bit map
+
+The right-hand column draws one character per payload bit, coloured by class —
+white `constant`, blue `slow`, green `active`, red `noisy` — with a space at
+every byte boundary so a field straddling two bytes is obvious.
+
+```
+message         count  len   period   cadence  entropy  bits (intel, 64 of 64 shown)
+bus 1 0x365       600   8   100.0ms    cyclic     52.7  ##+++++: ##++++++ ######## ++++++++ #####+++ ++#+++.. ++#+++.. ########
+bus 1 0x210      1200   8    50.0ms    cyclic     49.2  ##+++++: #+++++++ .##++##+ +++++::: .:..+#++ ++++..++ +:.+++++ ###++##+
+```
+
+Piped output, `NO_COLOR=1`, or `--no-color` falls back to glyphs of escalating
+density — `.` constant, `:` slow, `+` active, `#` noisy — so the shape survives
+a log file or a colour-blind reader. `FORCE_COLOR=1` forces colour on.
+
+The strip is sized to your terminal; wider terminals show more bits. A `›` at
+the end means the payload continues past what fits, which is normal for CAN FD
+(32 bytes is 256 bits). Use `--bit-columns N` to pin the width, or
+`--no-bitmap` for the old numeric `const/slow/active/noisy` counts.
+
+Reading these pays off quickly. On the EV6, `0x210`–`0x212` all open with
+**two solid red bytes** — sixteen bits flipping almost every frame at the head
+of the payload, which is what a CRC looks like. On the Prius, every message
+above shares the byte-0 pattern `##+++++:`.
+
+### Bit order: Intel by default
+
+`--order intel` (the default) numbers bits the way DBC files do: index 0 is the
+**least** significant bit of byte 0, index 7 its MSB, index 8 the LSB of byte 1.
+`--order motorola` walks each byte the other way, MSB first, as you read hex.
+
+The two are an exact per-byte reversal of each other and **nothing measured
+changes** — same entropies, same classes, same totals, just a different column
+order. Only the display and the bit indices move:
+
+```
+intel     ##+++++: #+++++++ .##++##+ +++++::: .:..+#++ ++++..++ +:.+++++ ###++##+
+motorola  :+++++## +++++++# +##++##. :::+++++ ++#+..:. ++..++++ +++++.:+ +##++###
+```
+
+Pick the one matching the convention you will write your signal definitions
+in, so a bit index you note down means the same thing later.
+
 ### The four bit classes
 
 - **constant** — never changes. Padding, reserved fields, or a value fixed for

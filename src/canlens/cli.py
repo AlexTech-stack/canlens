@@ -9,6 +9,7 @@ import os
 import sys
 
 from . import __version__
+from .analyze.bits import BitOrder
 from .corpus import AVG_SEGMENT_MB, FetchResult, Manifest, fetch_all, segment_dest, select
 
 DEFAULT_ROOT = os.environ.get("CANLENS_DATA", os.path.expanduser("~/data/canlens"))
@@ -113,31 +114,56 @@ def cmd_decode_summary(args) -> int:
 
 
 def cmd_analyze_trace(args) -> int:
-    from .analyze import BitKind, analyze_segment
+    import shutil
 
-    profile = analyze_segment(args.path, root=args.root)
+    from .analyze import BitKind, BitOrder, analyze_segment
+    from .render import bit_strip, bits_that_fit, legend, strip_width, supports_color
+
+    order = BitOrder(args.order)
+    profile = analyze_segment(args.path, root=args.root, order=order)
+    color = supports_color() and not args.no_color
+
     print(f"{_platform_label(args.root, args.path)}{args.path}")
     print(
         f"{profile.frames} frames, {len(profile)} messages, "
         f"{profile.duration_s:.1f}s, {profile.total_entropy:.0f} bits of payload entropy"
     )
-    print(
-        f"\n{'message':<16}{'count':>7}{'len':>5}{'period':>9}{'cadence':>10}"
-        f"{'entropy':>9}  bits (const/slow/active/noisy)"
-    )
-    for message in profile.by_entropy()[: args.top]:
-        counts = "/".join(
-            str(message.bits.count(k))
-            for k in (BitKind.CONSTANT, BitKind.SLOW, BitKind.ACTIVE, BitKind.NOISY)
-        )
+
+    rows = profile.by_entropy()[: args.top]
+    head = f"{'message':<14}{'count':>7}{'len':>5}{'period':>9}{'cadence':>10}{'entropy':>9}  "
+
+    if args.bitmap:
+        widest = max((m.bits.bits for m in rows), default=0)
+        if args.bit_columns:
+            budget = strip_width(args.bit_columns)
+        else:
+            budget = max(16, shutil.get_terminal_size((110, 24)).columns - len(head) - 1)
+        max_bits = min(widest, bits_that_fit(budget))
+        print(f"\n{head}bits ({order}, {max_bits} of {widest} shown)")
+    else:
+        print(f"\n{head}bits (const/slow/active/noisy)")
+        max_bits = 0
+
+    for message in rows:
         period = f"{message.timing.period_ms:.1f}ms" if message.timing.period_ms else "-"
         flag = "*" if message.multi_length else " "
-        print(
-            f"{message!s:<16}{message.count:>7}{message.width:>4}{flag}{period:>9}"
-            f"{message.timing.cadence!s:>10}{message.bits.payload_entropy:>9.1f}  {counts}"
+        line = (
+            f"{message!s:<14}{message.count:>7}{message.width:>4}{flag}{period:>9}"
+            f"{message.timing.cadence!s:>10}{message.bits.payload_entropy:>9.1f}  "
         )
-    if any(m.multi_length for m in profile.by_entropy()[: args.top]):
-        print("\n* payload length varies -- stats cover the dominant length only")
+        if args.bitmap:
+            line += bit_strip(message.bits.kinds, color=color, max_bits=max_bits)
+        else:
+            line += "/".join(
+                str(message.bits.count(k))
+                for k in (BitKind.CONSTANT, BitKind.SLOW, BitKind.ACTIVE, BitKind.NOISY)
+            )
+        print(line)
+
+    if args.bitmap:
+        print(f"\n{legend(color)}")
+    if any(m.multi_length for m in rows):
+        print("* payload length varies -- stats cover the dominant length only")
     return 0
 
 
@@ -200,6 +226,22 @@ def build_parser() -> argparse.ArgumentParser:
     p = aops.add_parser("trace", help="per-message measurements for one segment")
     p.add_argument("path", help="path to rlog.zst")
     p.add_argument("--top", type=int, default=20, help="rows to print (default: 20)")
+    p.add_argument(
+        "--order",
+        choices=[o.value for o in BitOrder],
+        default=BitOrder.INTEL.value,
+        help="payload bit numbering (default: %(default)s, as DBC files use)",
+    )
+    p.add_argument(
+        "--no-bitmap",
+        dest="bitmap",
+        action="store_false",
+        help="print per-class counts instead of the coloured bit map",
+    )
+    p.add_argument(
+        "--bit-columns", type=int, help="bits to show per row (default: fit the terminal)"
+    )
+    p.add_argument("--no-color", action="store_true", help="never emit ANSI colour")
     p.set_defaults(func=cmd_analyze_trace)
 
     return parser

@@ -7,15 +7,39 @@ Everything here is a *measurement*, not a hypothesis: how often a bit is set,
 how often it changes, how much information it carries. Deciding that a run of
 bits is a counter or a CRC is inference and belongs in :mod:`canlens.infer`.
 
-Bit numbering is MSB-first within each byte, which is how CAN signal layouts
-are conventionally described, so bit 0 is the most significant bit of byte 0.
+Bit ordering is explicit and selectable, because getting it wrong is silent.
+Under :data:`BitOrder.INTEL` -- the default, and the numbering DBC files use --
+index ``i`` is bit ``i % 8`` of byte ``i // 8`` counting from the *least*
+significant bit, so index 0 is the LSB of byte 0 and index 7 its MSB. Under
+:data:`BitOrder.MOTOROLA` the walk within each byte is reversed, MSB first.
+
+Only the column order changes: a bit's measurements are the same either way.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Literal
 
 import numpy as np
+
+
+class BitOrder(str, Enum):
+    """How payload bytes are unpacked into a flat bit index.
+
+    INTEL walks each byte LSB-first (DBC bit numbering); MOTOROLA walks it
+    MSB-first, as hex is read.
+    """
+
+    INTEL = "intel"
+    MOTOROLA = "motorola"
+
+    def __str__(self) -> str:
+        return self.value
+
+    @property
+    def numpy_bitorder(self) -> Literal["big", "little"]:
+        return "little" if self is BitOrder.INTEL else "big"
 
 
 class BitKind(str, Enum):
@@ -44,12 +68,14 @@ SLOW_MAX_RATE = 0.01
 NOISY_MIN_RATE = 0.40
 
 
-def bit_matrix(payloads: list[bytes], width: int) -> np.ndarray:
+def bit_matrix(
+    payloads: list[bytes], width: int, order: BitOrder = BitOrder.INTEL
+) -> np.ndarray:
     """Stack equal-length payloads into an (n_frames, width * 8) bit matrix."""
     if not payloads:
         return np.zeros((0, width * 8), dtype=np.uint8)
     raw = np.frombuffer(b"".join(payloads), dtype=np.uint8).reshape(len(payloads), width)
-    return np.unpackbits(raw, axis=1, bitorder="big")
+    return np.unpackbits(raw, axis=1, bitorder=order.numpy_bitorder)
 
 
 def bit_entropy(matrix: np.ndarray) -> np.ndarray:
@@ -96,6 +122,7 @@ class BitProfile:
     entropy: np.ndarray
     rates: np.ndarray
     kinds: list[BitKind]
+    order: BitOrder = BitOrder.INTEL
 
     @property
     def bits(self) -> int:
@@ -118,9 +145,11 @@ class BitProfile:
         return float(self.entropy.sum())
 
 
-def profile_bits(payloads: list[bytes], width: int) -> BitProfile:
+def profile_bits(
+    payloads: list[bytes], width: int, order: BitOrder = BitOrder.INTEL
+) -> BitProfile:
     """Measure every bit position across a stack of same-width payloads."""
-    matrix = bit_matrix(payloads, width)
+    matrix = bit_matrix(payloads, width, order)
     entropy = bit_entropy(matrix)
     rates = transition_rate(matrix)
     ones = matrix.mean(axis=0) if matrix.shape[0] else np.zeros(width * 8)
@@ -131,4 +160,5 @@ def profile_bits(payloads: list[bytes], width: int) -> BitProfile:
         entropy=entropy,
         rates=rates,
         kinds=classify_bits(rates, entropy),
+        order=order,
     )

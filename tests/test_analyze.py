@@ -9,6 +9,7 @@ import pytest
 
 from canlens.analyze import (
     BitKind,
+    BitOrder,
     Cadence,
     analyze_frames,
     bit_entropy,
@@ -29,13 +30,14 @@ def frames(payloads, *, bus=0, address=0x123, period_ns=10_000_000, start=1_000)
 
 
 class TestBitMatrix:
-    def test_shape_and_msb_first_ordering(self):
+    def test_shape_and_default_intel_ordering(self):
         m = bit_matrix([b"\x80\x01"], width=2)
         assert m.shape == (1, 16)
-        # MSB of byte 0 is bit 0; LSB of byte 1 is bit 15.
-        assert m[0, 0] == 1
-        assert m[0, 15] == 1
-        assert m[0, 1:15].sum() == 0
+        # Intel (the default): index 0 is the LSB of byte 0, so 0x80 lands at
+        # index 7 and byte 1's 0x01 at index 8.
+        assert m[0, 7] == 1
+        assert m[0, 8] == 1
+        assert m[0, [0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15]].sum() == 0
 
     def test_empty_input_keeps_the_width(self):
         assert bit_matrix([], width=8).shape == (0, 64)
@@ -49,12 +51,12 @@ class TestEntropy:
     def test_evenly_split_bit_carries_one_bit(self):
         m = bit_matrix([b"\x00", b"\x01"], width=1)
         h = bit_entropy(m)
-        assert h[7] == pytest.approx(1.0)
-        assert h[:7].tolist() == [0.0] * 7
+        assert h[0] == pytest.approx(1.0)  # Intel: 0x01 is index 0
+        assert h[1:].tolist() == [0.0] * 7
 
     def test_skewed_bit_is_between_zero_and_one(self):
         m = bit_matrix([b"\x01"] + [b"\x00"] * 7, width=1)
-        assert 0.0 < bit_entropy(m)[7] < 1.0
+        assert 0.0 < bit_entropy(m)[0] < 1.0
 
     def test_no_warning_on_degenerate_columns(self):
         with np.errstate(all="raise"):
@@ -64,7 +66,7 @@ class TestEntropy:
 class TestTransitionRate:
     def test_alternating_bit_flips_every_frame(self):
         m = bit_matrix([b"\x00", b"\x01", b"\x00", b"\x01"], width=1)
-        assert transition_rate(m)[7] == pytest.approx(1.0)
+        assert transition_rate(m)[0] == pytest.approx(1.0)
 
     def test_constant_bit_never_flips(self):
         m = bit_matrix([b"\x00"] * 4, width=1)
@@ -90,11 +92,12 @@ class TestClassifyBits:
 
 class TestProfileBits:
     def test_counter_low_bit_is_noisy_and_high_bit_is_not(self):
-        # An 8-bit counter: bit 7 flips every frame, bit 0 every 128.
+        # An 8-bit counter. In Intel numbering the LSB -- which flips every
+        # frame -- is index 0, and the MSB, flipping every 128, is index 7.
         payloads = [bytes([i % 256]) for i in range(256)]
         profile = profile_bits(payloads, width=1)
-        assert profile.kinds[7] is BitKind.NOISY
-        assert profile.kinds[0] is not BitKind.NOISY
+        assert profile.kinds[0] is BitKind.NOISY
+        assert profile.kinds[7] is not BitKind.NOISY
 
     def test_constant_payload_has_no_entropy(self):
         profile = profile_bits([b"\xa5" * 8] * 50, width=8)
@@ -160,3 +163,42 @@ class TestAnalyzeFrames:
     def test_empty_trace_is_safe(self):
         profile = analyze_frames([])
         assert len(profile) == 0 and profile.frames == 0
+
+
+class TestBitOrder:
+    """Intel is DBC numbering: index 0 is the LSB of byte 0."""
+
+    def test_intel_puts_the_lsb_first(self):
+        m = bit_matrix([b"\x01\x80"], width=2, order=BitOrder.INTEL)
+        assert m[0, 0] == 1  # LSB of byte 0
+        assert m[0, 15] == 1  # MSB of byte 1
+
+    def test_motorola_puts_the_msb_first(self):
+        m = bit_matrix([b"\x80\x01"], width=2, order=BitOrder.MOTOROLA)
+        assert m[0, 0] == 1  # MSB of byte 0
+        assert m[0, 15] == 1  # LSB of byte 1
+
+    def test_orders_are_a_per_byte_reversal(self):
+        payloads = [bytes([i, 255 - i]) for i in range(64)]
+        intel = profile_bits(payloads, 2, BitOrder.INTEL).kinds
+        motorola = profile_bits(payloads, 2, BitOrder.MOTOROLA).kinds
+        for byte in range(2):
+            lo, hi = byte * 8, (byte + 1) * 8
+            assert intel[lo:hi] == motorola[lo:hi][::-1]
+
+    def test_ordering_does_not_change_what_was_measured(self):
+        payloads = [bytes([i]) for i in range(256)]
+        intel = profile_bits(payloads, 1, BitOrder.INTEL)
+        motorola = profile_bits(payloads, 1, BitOrder.MOTOROLA)
+        assert sorted(intel.kinds, key=str) == sorted(motorola.kinds, key=str)
+        assert intel.payload_entropy == pytest.approx(motorola.payload_entropy)
+
+    def test_profile_records_the_order_used(self):
+        assert profile_bits([b"\x00"], 1, BitOrder.MOTOROLA).order is BitOrder.MOTOROLA
+
+    def test_default_is_intel(self):
+        assert profile_bits([b"\x00"], 1).order is BitOrder.INTEL
+
+    def test_analyze_frames_passes_the_order_down(self):
+        profile = analyze_frames(frames([b"\x01"] * 4), order=BitOrder.MOTOROLA)
+        assert profile[(0, 0x123)].bits.order is BitOrder.MOTOROLA

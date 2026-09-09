@@ -9,7 +9,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from ..decode import CanFrame, iter_frames
-from .bits import BitProfile, profile_bits
+from .bits import BitOrder, BitProfile, profile_bits
 from .timing import TimingProfile, profile_timing
 
 
@@ -69,7 +69,9 @@ class TraceProfile:
         return sum(m.bits.payload_entropy for m in self.messages.values())
 
 
-def analyze_frames(frames: Iterable[CanFrame]) -> TraceProfile:
+def analyze_frames(
+    frames: Iterable[CanFrame], order: BitOrder = BitOrder.INTEL
+) -> TraceProfile:
     """Measure every message in a stream of frames."""
     payloads: dict[tuple[int, int], list[bytes]] = defaultdict(list)
     stamps: dict[tuple[int, int], list[int]] = defaultdict(list)
@@ -101,7 +103,7 @@ def analyze_frames(frames: Iterable[CanFrame]) -> TraceProfile:
             lengths=dict(sorted(lengths[key].items())),
             width=width,
             analysed=len(same_width),
-            bits=profile_bits(same_width, width),
+            bits=profile_bits(same_width, width, order),
             timing=profile_timing(stamps[key]),
         )
 
@@ -109,6 +111,8 @@ def analyze_frames(frames: Iterable[CanFrame]) -> TraceProfile:
     return TraceProfile(messages=messages, frames=total, duration_s=duration)
 
 
-def analyze_segment(path: str, *, root: str, **kwargs) -> TraceProfile:
+def analyze_segment(
+    path: str, *, root: str, order: BitOrder = BitOrder.INTEL, **kwargs
+) -> TraceProfile:
     """Decode one `rlog.zst` and measure it."""
-    return analyze_frames(iter_frames(path, root=root, **kwargs))
+    return analyze_frames(iter_frames(path, root=root, **kwargs), order)
