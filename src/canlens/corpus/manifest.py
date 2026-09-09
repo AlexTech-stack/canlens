@@ -45,7 +45,7 @@ class Manifest:
         self._platforms = {k: Platform(k, tuple(v)) for k, v in platforms.items()}
 
     @classmethod
-    def load(cls, path: str, *, download: bool = True) -> "Manifest":
+    def load(cls, path: str, *, download: bool = True) -> Manifest:
         """Load the manifest, fetching it (~9 MB) if absent and allowed."""
         if not os.path.exists(path):
             if not download:
