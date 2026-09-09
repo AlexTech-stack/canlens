@@ -97,7 +97,7 @@ third-party package is skipped entirely.
 | package | role |
 |---|---|
 | `corpus/` | manifest, selective fetch, local accounting — **working** |
-| `decode/` | `rlog.zst` (zstd + capnp `cereal`) → normalised CAN records |
+| `decode/` | `rlog.zst` → normalised CAN records — **working** |
 | `analyze/` | single-trace timing, entropy, per-bit classification |
 | `infer/` | signals, counters, CRCs, multiplexors, scaling, enums |
 | `corroborate/` | cross-segment and cross-platform agreement |

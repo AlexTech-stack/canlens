@@ -72,6 +72,32 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_decode_schema(args) -> int:
+    from .decode import ensure_schemas
+
+    target = ensure_schemas(args.root, refresh=args.refresh)
+    print(f"schemas ready in {target}")
+    return 0
+
+
+def cmd_decode_summary(args) -> int:
+    from .decode import summarize
+
+    for path in args.path:
+        s = summarize(path, root=args.root)
+        echo_pct = 100 * s.echoes / s.frames if s.frames else 0.0
+        print(path)
+        print(
+            f"  {s.frames - s.echoes} frames over {s.duration_s:.1f}s "
+            f"({s.echoes} echoes dropped, {echo_pct:.0f}% of raw)"
+        )
+        print(f"  {s.unique_addresses} unique (bus, address) pairs")
+        for bus, n in s.buses.items():
+            addrs = sum(1 for b, _ in s.addresses if b == bus)
+            print(f"    bus {bus}: {n:>7} frames, {addrs:>4} addresses")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="canlens", description=__doc__)
     parser.add_argument("--version", action="version", version=f"canlens {__version__}")
@@ -101,6 +127,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = ops.add_parser("status", help="report how much of the corpus is local")
     p.set_defaults(func=cmd_status)
+
+    decode = sub.add_parser("decode", help="turn raw logs into CAN frames")
+    dops = decode.add_subparsers(dest="op", required=True)
+
+    p = dops.add_parser("schema", help="fetch the capnp schemas needed to read rlogs")
+    p.add_argument("--refresh", action="store_true", help="re-download even if cached")
+    p.set_defaults(func=cmd_decode_schema)
+
+    p = dops.add_parser("summary", help="report what a segment contains")
+    p.add_argument("path", nargs="+", help="path(s) to rlog.zst")
+    p.set_defaults(func=cmd_decode_summary)
+
     return parser
 
 

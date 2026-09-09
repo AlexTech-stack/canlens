@@ -112,3 +112,9 @@ src = ["src", "tests"]
 [tool.mypy]
 files = ["src"]
 python_version = "3.11"
+
+# capnp ships no py.typed; compression.zstd only exists on 3.14, and mypy is
+# pinned to the 3.11 floor so it cannot see it.
+[[tool.mypy.overrides]]
+module = ["capnp", "capnp.*", "zstandard", "compression.zstd"]
+ignore_missing_imports = true
