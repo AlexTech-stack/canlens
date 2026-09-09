@@ -8,22 +8,94 @@ version = "0.0.1"
 description = "Corpus-scale reverse engineering of automotive CAN bus traces"
 readme = "README.md"
 license = "MIT"
+# 3.11 is the floor because that is what the openpilot/opendbc ecosystem runs
+# on, and being importable from inside such an environment is worth more than
+# the small zstd shim it costs us (see the `decode` extra). numpy >= 2.5 wants
+# 3.12+, so a 3.11 install simply resolves an older numpy.
 requires-python = ">=3.11"
 authors = [{ name = "Alexander Günther" }]
 keywords = ["can", "canbus", "automotive", "reverse-engineering", "dbc", "openpilot"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
 ]
-dependencies = []
+
+# Kept deliberately short. `canlens.corpus` is stdlib-only (urllib, json,
+# concurrent.futures) and stays that way, so fetching data never drags in a
+# compiler toolchain. numpy is core rather than optional on purpose: every
+# analysis layer above `decode` is bit-matrix work over hundreds of thousands
+# of frames, and making it optional would mean maintaining a slow pure-Python
+# path beside the real one forever.
+dependencies = [
+    "numpy>=1.26",
+]
 
 [project.optional-dependencies]
-# Decoding openpilot rlog.zst (zstd-compressed capnp cereal messages).
-decode = ["zstandard>=0.22", "pycapnp>=2.0"]
-# Vectorised bit-matrix work in the inference engine.
-fast = ["numpy>=1.26"]
-dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+# Reading the corpus itself: openpilot `rlog.zst` is zstd-compressed capnp
+# (`cereal`) -- two separate problems.
+#
+# zstd: Python 3.14 ships `compression.zstd` in the stdlib (PEP 784), so the
+# third-party package is only pulled in below that. Verified: stdlib zstd
+# decompresses a real segment here.
+#
+# capnp: pycapnp 2.2.4 has a cp314 manylinux wheel and is verified working on
+# 3.14 -- 453909 CAN frames parsed out of one segment at ~330k frames/s.
+#
+# NOTE: the `.capnp` schemas are NOT distributed on PyPI and are not a pip
+# dependency. `log.capnp` + `legacy.capnp` + `custom.capnp` + `include/c++.capnp`
+# come from commaai/openpilot (branch `release3`), and `car.capnp` must come
+# from commaai/opendbc -- in openpilot it is a git symlink, so a raw fetch of
+# it returns the link text rather than the schema. `canlens.decode` fetches
+# all five on demand; they are MIT, but stay unvendored like the corpus data.
+decode = [
+    "pycapnp>=2.2",
+    "zstandard>=0.22; python_version < '3.14'",
+]
+
+# Decoded-frame cache. Re-parsing costs ~1.4 s per segment, so a platform-sized
+# working set (thousands of segments) is over an hour of CPU before any analysis
+# starts. Parquet makes that a one-time cost and gives the corroboration layer
+# columnar reads over the result.
+store = [
+    "pyarrow>=17",
+]
+
+# Ground truth for scoring the inference engine.
+#
+# NOTE: deliberately NOT the `opendbc` PyPI package -- it declares
+# `requires-python = <3.13,>=3.11` and pins `pycapnp==2.1.0`, so it cannot be
+# installed alongside this project on 3.13+. We only ever wanted its .dbc
+# files, which are plain data: fetch them from the repo and parse with cantools.
+truth = [
+    "cantools>=39",
+]
+
+# Ingesting traces that did not come from the corpus (.blf, .asc, ...), so
+# recordings from a normal CAN logger can be analysed with the same engine.
+traces = [
+    "python-can>=4.3",
+]
+
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+# Everything except dev, for a working install in one line.
+all = [
+    "canlens[decode,store,truth,traces]",
+]
+
+[project.urls]
+Repository = "https://github.com/AlexTech-stack/canlens"
 
 [project.scripts]
 canlens = "canlens.cli:main"
@@ -37,3 +109,7 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
+
+[tool.mypy]
+files = ["src"]
+python_version = "3.11"

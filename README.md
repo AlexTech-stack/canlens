@@ -63,6 +63,35 @@ For scale: the largest single platform is ~18 GB, and the median platform is
 ~0.3 GB. A working set of a few hundred segments across a dozen platforms is a
 couple of GB, not 299.
 
+## Dependencies
+
+Core is `numpy` only — `canlens.corpus` is deliberately stdlib-only, so pulling
+data never needs a compiler. Everything else is an extra:
+
+| extra | pulls | for |
+|---|---|---|
+| `decode` | `pycapnp`, `zstandard` (only below 3.14) | reading `rlog.zst` |
+| `store` | `pyarrow` | decoded-frame cache |
+| `truth` | `cantools` | parsing opendbc DBCs |
+| `traces` | `python-can` | `.blf` / `.asc` ingest |
+
+Two things worth knowing:
+
+**The capnp schemas are not a pip dependency.** `rlog` is capnp `cereal`, and
+those `.capnp` files ship on no package index. `log.capnp`, `legacy.capnp`,
+`custom.capnp` and `include/c++.capnp` come from `commaai/openpilot` (branch
+`release3`); `car.capnp` must come from `commaai/opendbc`, because in openpilot
+it is a git symlink and a raw fetch returns the link text, not the schema.
+`decode/` fetches all five on demand — MIT, and unvendored like the corpus.
+
+**The `opendbc` PyPI package is not used.** It declares
+`requires-python = <3.13,>=3.11` and pins `pycapnp==2.1.0`, so it cannot coexist
+with this project on 3.13+. Only its `.dbc` files were ever wanted; those are
+plain data, fetched from the repo and parsed with `cantools`.
+
+On Python 3.14, zstd comes from the stdlib (`compression.zstd`, PEP 784) and the
+third-party package is skipped entirely.
+
 ## Layout
 
 | package | role |
