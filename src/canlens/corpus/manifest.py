@@ -43,6 +43,7 @@ class Manifest:
 
     def __init__(self, platforms: dict[str, list[str]]) -> None:
         self._platforms = {k: Platform(k, tuple(v)) for k, v in platforms.items()}
+        self._owner: dict[str, str] | None = None
 
     @classmethod
     def load(cls, path: str, *, download: bool = True) -> Manifest:
@@ -74,6 +75,34 @@ class Manifest:
     @property
     def total_segments(self) -> int:
         return sum(p.count for p in self._platforms.values())
+
+    def platform_of(self, value: str) -> str | None:
+        """Which platform a segment belongs to, or None if it is not in the corpus.
+
+        The stored layout mirrors the upstream bucket, which is keyed by device
+        and route -- nothing in a path says which car it came from. This is the
+        only way back to that, so anything reporting on a segment should use it.
+        """
+        if self._owner is None:
+            self._owner = {
+                segment_relpath(s): key
+                for key, platform in self._platforms.items()
+                for s in platform.segments
+            }
+        return self._owner.get(segment_key(value))
+
+
+def segment_key(value: str) -> str:
+    """Normalise anything naming a segment to `<device>/<route>/<index>`.
+
+    Accepts a manifest segment ID (`.../s`), a stored relative path, or a full
+    filesystem path to an `rlog.zst`, because all three turn up in practice and
+    callers should not have to care which they are holding.
+    """
+    parts = [p for p in os.fspath(value).replace("\\", "/").split("/") if p]
+    if parts and (parts[-1].endswith(".zst") or parts[-1] == "s"):
+        parts = parts[:-1]
+    return "/".join(parts[-3:])
 
 
 def segment_relpath(segment_id: str) -> str:

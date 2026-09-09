@@ -58,7 +58,12 @@ canlens corpus list                              # 230 platforms, counts + sizes
 canlens corpus plan TOYOTA_PRIUS                 # size it before committing
 canlens corpus fetch TOYOTA_PRIUS KIA_EV6 --limit 200
 canlens corpus status                            # how much is local
+canlens corpus which <segment path>              # which car is this?
 ```
+
+Segment paths carry no platform name — the layout mirrors the upstream bucket,
+which is keyed by device and route — so `corpus which` (and the `[PLATFORM]`
+prefix on `decode`/`analyze` output) is the way back to which car a trace is.
 
 The local corpus root defaults to `~/data/canlens`, overridable with
 `--root` or `$CANLENS_DATA`. It is gitignored and must stay that way.

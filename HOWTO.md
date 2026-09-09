@@ -98,6 +98,31 @@ canlens decode schema
 This pulls five `.capnp` files into `~/data/canlens/schema`, pinned to commit
 SHAs rather than branches so a segment cannot decode differently next month.
 
+### Which car am I looking at?
+
+Nothing in a segment's path says which vehicle it came from. The on-disk
+layout mirrors the upstream bucket, which is keyed by *device* and *route*:
+
+```
+segments/0045a17309e72a84/00000044--dbc821d8d9/464/rlog.zst
+         ^device           ^route              ^index
+```
+
+Only `database.json` maps those to a platform, so a glob like
+`segments/*/*/*/rlog.zst` happily mixes every car you have fetched. Ask
+directly:
+
+```bash
+canlens corpus which ~/data/canlens/segments/0045a17309e72a84/*/*/rlog.zst
+```
+
+```
+TOYOTA_PRIUS   /home/testuser/data/canlens/segments/0045a17309e72a84/00000044--dbc821d8d9/464/rlog.zst
+```
+
+`decode summary` and `analyze trace` also print the platform as a `[PLATFORM]`
+prefix, so their output is never ambiguous about which car it describes.
+
 Then look at what a segment holds:
 
 ```bash
@@ -105,6 +130,7 @@ canlens decode summary ~/data/canlens/segments/*/*/*/rlog.zst
 ```
 
 ```
+[KIA_EV6] /home/testuser/data/canlens/segments/240e.../11/rlog.zst
 318551 frames over 60.0s (135358 echoes dropped, 30% of raw)
 239 unique (bus, address) pairs
   bus 0:   88767 frames,   70 addresses
@@ -140,6 +166,7 @@ canlens analyze trace ~/data/canlens/segments/240e.../11/rlog.zst --top 8
 ```
 
 ```
+[KIA_EV6] /home/testuser/data/canlens/segments/240e.../11/rlog.zst
 318551 frames, 239 messages, 60.0s, 12289 bits of payload entropy
 
 message           count  len   period   cadence  entropy  bits (const/slow/active/noisy)
@@ -155,7 +182,7 @@ bus 0 0x276        1199  32    50.1ms    cyclic    144.9  99/1/135/21
 | column | meaning |
 |---|---|
 | `count` | frames observed for this `(bus, address)` |
-| `len` | payload length used for bit stats; `*` marks a varying length |
+| `len` | payload length in bytes — 8 is classic CAN, 32+ means CAN FD |
 | `period` | median inter-arrival gap |
 | `cadence` | `cyclic`, `sporadic`, or `single` (too few samples to say) |
 | `entropy` | total Shannon entropy across the payload, in bits |

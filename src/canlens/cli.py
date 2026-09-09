@@ -29,6 +29,20 @@ def _plan(manifest: Manifest, platforms: list[str], limit: int | None) -> list[s
     return segments
 
 
+def _platform_label(root: str, path: str) -> str:
+    """`[PLATFORM] ` prefix for a segment, or empty if it cannot be resolved.
+
+    Nothing in the stored path says which car a segment came from -- the layout
+    mirrors the upstream bucket, which is keyed by device and route -- so this
+    is the only way to tell a Prius trace from an EV6 one.
+    """
+    try:
+        platform = _manifest(root).platform_of(path)
+    except (OSError, ValueError):
+        return ""
+    return f"[{platform}] " if platform else "[unknown platform] "
+
+
 def cmd_list(args) -> int:
     manifest = _manifest(args.root)
     for platform in manifest.by_size():
@@ -86,7 +100,7 @@ def cmd_decode_summary(args) -> int:
     for path in args.path:
         s = summarize(path, root=args.root)
         echo_pct = 100 * s.echoes / s.frames if s.frames else 0.0
-        print(path)
+        print(f"{_platform_label(args.root, path)}{path}")
         print(
             f"  {s.frames - s.echoes} frames over {s.duration_s:.1f}s "
             f"({s.echoes} echoes dropped, {echo_pct:.0f}% of raw)"
@@ -102,6 +116,7 @@ def cmd_analyze_trace(args) -> int:
     from .analyze import BitKind, analyze_segment
 
     profile = analyze_segment(args.path, root=args.root)
+    print(f"{_platform_label(args.root, args.path)}{args.path}")
     print(
         f"{profile.frames} frames, {len(profile)} messages, "
         f"{profile.duration_s:.1f}s, {profile.total_entropy:.0f} bits of payload entropy"
@@ -123,6 +138,14 @@ def cmd_analyze_trace(args) -> int:
         )
     if any(m.multi_length for m in profile.by_entropy()[: args.top]):
         print("\n* payload length varies -- stats cover the dominant length only")
+    return 0
+
+
+def cmd_corpus_which(args) -> int:
+    manifest = _manifest(args.root)
+    for path in args.path:
+        platform = manifest.platform_of(path)
+        print(f"{platform or 'not in the corpus manifest':<28} {path}")
     return 0
 
 
@@ -155,6 +178,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = ops.add_parser("status", help="report how much of the corpus is local")
     p.set_defaults(func=cmd_status)
+
+    p = ops.add_parser("which", help="say which platform a segment path belongs to")
+    p.add_argument("path", nargs="+", help="segment path(s) or IDs")
+    p.set_defaults(func=cmd_corpus_which)
 
     decode = sub.add_parser("decode", help="turn raw logs into CAN frames")
     dops = decode.add_subparsers(dest="op", required=True)
