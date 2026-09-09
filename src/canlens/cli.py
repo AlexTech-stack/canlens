@@ -98,6 +98,34 @@ def cmd_decode_summary(args) -> int:
     return 0
 
 
+def cmd_analyze_trace(args) -> int:
+    from .analyze import BitKind, analyze_segment
+
+    profile = analyze_segment(args.path, root=args.root)
+    print(
+        f"{profile.frames} frames, {len(profile)} messages, "
+        f"{profile.duration_s:.1f}s, {profile.total_entropy:.0f} bits of payload entropy"
+    )
+    print(
+        f"\n{'message':<16}{'count':>7}{'len':>5}{'period':>9}{'cadence':>10}"
+        f"{'entropy':>9}  bits (const/slow/active/noisy)"
+    )
+    for message in profile.by_entropy()[: args.top]:
+        counts = "/".join(
+            str(message.bits.count(k))
+            for k in (BitKind.CONSTANT, BitKind.SLOW, BitKind.ACTIVE, BitKind.NOISY)
+        )
+        period = f"{message.timing.period_ms:.1f}ms" if message.timing.period_ms else "-"
+        flag = "*" if message.multi_length else " "
+        print(
+            f"{message!s:<16}{message.count:>7}{message.width:>4}{flag}{period:>9}"
+            f"{message.timing.cadence!s:>10}{message.bits.payload_entropy:>9.1f}  {counts}"
+        )
+    if any(m.multi_length for m in profile.by_entropy()[: args.top]):
+        print("\n* payload length varies -- stats cover the dominant length only")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="canlens", description=__doc__)
     parser.add_argument("--version", action="version", version=f"canlens {__version__}")
@@ -138,6 +166,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = dops.add_parser("summary", help="report what a segment contains")
     p.add_argument("path", nargs="+", help="path(s) to rlog.zst")
     p.set_defaults(func=cmd_decode_summary)
+
+    analyze = sub.add_parser("analyze", help="measure timing and payload entropy")
+    aops = analyze.add_subparsers(dest="op", required=True)
+
+    p = aops.add_parser("trace", help="per-message measurements for one segment")
+    p.add_argument("path", help="path to rlog.zst")
+    p.add_argument("--top", type=int, default=20, help="rows to print (default: 20)")
+    p.set_defaults(func=cmd_analyze_trace)
 
     return parser
 

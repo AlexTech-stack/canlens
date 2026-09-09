@@ -2,8 +2,12 @@
 
 Corpus-scale reverse engineering of automotive CAN bus traces.
 
-> **Status: pre-alpha.** The corpus layer works. Everything downstream of it is
-> scaffolding with an honest docstring where the implementation will go.
+> **Status: pre-alpha.** `corpus`, `decode` and `analyze` work. Everything
+> downstream is scaffolding with an honest docstring where the implementation
+> will go.
+
+**New here? Read [HOWTO.md](HOWTO.md)** — an end-to-end walkthrough from empty
+machine to per-bit measurements of a real vehicle's traffic.
 
 ## Why
 
@@ -98,7 +102,7 @@ third-party package is skipped entirely.
 |---|---|
 | `corpus/` | manifest, selective fetch, local accounting — **working** |
 | `decode/` | `rlog.zst` → normalised CAN records — **working** |
-| `analyze/` | single-trace timing, entropy, per-bit classification |
+| `analyze/` | single-trace timing, entropy, per-bit classification — **working** |
 | `infer/` | signals, counters, CRCs, multiplexors, scaling, enums |
 | `corroborate/` | cross-segment and cross-platform agreement |
 | `truth/` | opendbc ground truth, scoring the inference engine |

@@ -108,10 +108,15 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
+# Guards the 3.11 floor: ruff rejects syntax newer than this, so the supported
+# range is enforced even though the dev environment runs 3.14.
+target-version = "py311"
 
 [tool.mypy]
 files = ["src"]
-python_version = "3.11"
+# No python_version pin: it would be checked against numpy's stubs, which use
+# 3.12+ syntax on the version installed here. Ruff's target-version guards the
+# 3.11 floor for our own syntax instead.
 
 # capnp ships no py.typed; compression.zstd only exists on 3.14, and mypy is
 # pinned to the 3.11 floor so it cannot see it.
