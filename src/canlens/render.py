@@ -12,7 +12,7 @@ import os
 import sys
 from typing import IO
 
-from .analyze.bits import BitKind
+from .analyze.bits import KIND_ORDER, BitKind
 
 RESET = "\x1b[0m"
 
@@ -23,6 +23,7 @@ BACKGROUNDS: dict[BitKind, str] = {
     BitKind.CONSTANT: "\x1b[107m",  # white
     BitKind.SLOW: "\x1b[104m",  # blue
     BitKind.ACTIVE: "\x1b[102m",  # green
+    BitKind.BUSY: "\x1b[103m",  # yellow
     BitKind.NOISY: "\x1b[101m",  # red
 }
 
@@ -32,6 +33,7 @@ GLYPHS: dict[BitKind, str] = {
     BitKind.CONSTANT: ".",
     BitKind.SLOW: ":",
     BitKind.ACTIVE: "+",
+    BitKind.BUSY: "*",
     BitKind.NOISY: "#",
 }
 
@@ -92,7 +94,7 @@ def bits_that_fit(available: int, *, group: int = 8) -> int:
 def legend(color: bool = True) -> str:
     """One-line key for the strip colours."""
     parts = []
-    for kind in (BitKind.CONSTANT, BitKind.SLOW, BitKind.ACTIVE, BitKind.NOISY):
+    for kind in KIND_ORDER:
         mark = f"{BACKGROUNDS[kind]} {RESET}" if color else GLYPHS[kind]
         parts.append(f"{mark} {kind}")
     return "  ".join(parts)

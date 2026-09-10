@@ -51,7 +51,8 @@ class BitKind(str, Enum):
 
     CONSTANT = "constant"  # never changes
     SLOW = "slow"  # changes rarely: state, mode, warning flags
-    ACTIVE = "active"  # changes at a moderate rate: physical quantities
+    ACTIVE = "active"  # changes at a moderate rate: upper bits of a value
+    BUSY = "busy"  # changes often: lower bits of a moving value
     NOISY = "noisy"  # changes almost every frame: counter LSBs, CRCs
 
     def __str__(self) -> str:
@@ -61,11 +62,33 @@ class BitKind(str, Enum):
 # Transition rate = fraction of consecutive frame pairs where the bit differs.
 # A bit flipping on more than 40% of frames is doing so about as often as a
 # fair coin, which is what a CRC bit or a counter's low bit looks like. Below
-# 1% it is carrying state rather than a value. Both are deliberately loose:
-# they exist to partition work, and the inference layer re-tests anything it
-# cares about.
+# 1% it is carrying state rather than a value.
 SLOW_MAX_RATE = 0.01
 NOISY_MIN_RATE = 0.40
+
+# Everything between those two was one class, and it was far too broad: pooled
+# over 24 corpus segments it held 24.7% of all bit positions across a 40x range
+# of rates, more than any other band. Splitting it is worthwhile because the
+# rate falls monotonically with a bit's significance inside a numeric field
+# (measured mean rate by within-byte position: .343 .242 .180 .151 .137 .132
+# .121 .105), so the two halves separate a value's fast-moving low bits from
+# its slower upper bits.
+#
+# The measured distribution is smooth, with no trough to snap to, so this
+# boundary is a choice rather than a discovery: 0.10 is a tenth of all frames,
+# which is easy to reason about, and lands near the band's median rate of
+# 0.078 -- it splits the band 56/44. Tune it freely.
+BUSY_MIN_RATE = 0.10
+
+# Canonical presentation order: least to most movement. Anything listing the
+# kinds should use this rather than rebuilding a tuple that will drift.
+KIND_ORDER: tuple[BitKind, ...] = (
+    BitKind.CONSTANT,
+    BitKind.SLOW,
+    BitKind.ACTIVE,
+    BitKind.BUSY,
+    BitKind.NOISY,
+)
 
 
 def bit_matrix(
@@ -107,6 +130,8 @@ def classify_bits(rates: np.ndarray, entropy: np.ndarray) -> list[BitKind]:
             kinds.append(BitKind.NOISY)
         elif rate <= SLOW_MAX_RATE:
             kinds.append(BitKind.SLOW)
+        elif rate >= BUSY_MIN_RATE:
+            kinds.append(BitKind.BUSY)
         else:
             kinds.append(BitKind.ACTIVE)
     return kinds

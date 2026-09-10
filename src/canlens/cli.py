@@ -116,7 +116,7 @@ def cmd_decode_summary(args) -> int:
 def cmd_analyze_trace(args) -> int:
     import shutil
 
-    from .analyze import BitKind, BitOrder, analyze_segment
+    from .analyze import KIND_ORDER, BitOrder, analyze_segment
     from .render import bit_strip, bits_that_fit, legend, strip_width, supports_color
 
     order = BitOrder(args.order)
@@ -141,7 +141,7 @@ def cmd_analyze_trace(args) -> int:
         max_bits = min(widest, bits_that_fit(budget))
         print(f"\n{head}bits ({order}, {max_bits} of {widest} shown)")
     else:
-        print(f"\n{head}bits (const/slow/active/noisy)")
+        print(f"\n{head}bits ({'/'.join(str(k) for k in KIND_ORDER)})")
         max_bits = 0
 
     for message in rows:
@@ -154,10 +154,7 @@ def cmd_analyze_trace(args) -> int:
         if args.bitmap:
             line += bit_strip(message.bits.kinds, color=color, max_bits=max_bits)
         else:
-            line += "/".join(
-                str(message.bits.count(k))
-                for k in (BitKind.CONSTANT, BitKind.SLOW, BitKind.ACTIVE, BitKind.NOISY)
-            )
+            line += "/".join(str(message.bits.count(k)) for k in KIND_ORDER)
         print(line)
 
     if args.bitmap:

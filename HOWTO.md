@@ -195,18 +195,18 @@ engineer, however often it arrives.
 ### The bit map
 
 The right-hand column draws one character per payload bit, coloured by class —
-white `constant`, blue `slow`, green `active`, red `noisy` — with a space at
-every byte boundary so a field straddling two bytes is obvious.
+white `constant`, blue `slow`, green `active`, yellow `busy`, red `noisy` —
+with a space at every byte boundary so a field straddling two bytes is obvious.
 
 ```
 message         count  len   period   cadence  entropy  bits (intel, 64 of 64 shown)
-bus 1 0x365       600   8   100.0ms    cyclic     52.7  ##+++++: ##++++++ ######## ++++++++ #####+++ ++#+++.. ++#+++.. ########
-bus 1 0x210      1200   8    50.0ms    cyclic     49.2  ##+++++: #+++++++ .##++##+ +++++::: .:..+#++ ++++..++ +:.+++++ ###++##+
+bus 1 0x365       600   8   100.0ms    cyclic     52.7  ##**+++: ##****** ######## ++++++++ #####**+ **#***.. **#***.. ########
+bus 1 0x210      1200   8    50.0ms    cyclic     49.2  ##**+++: #***++++ .##**##* *++++::: .:..+#** ++++..++ +:.***** ###**##*
 ```
 
 Piped output, `NO_COLOR=1`, or `--no-color` falls back to glyphs of escalating
-density — `.` constant, `:` slow, `+` active, `#` noisy — so the shape survives
-a log file or a colour-blind reader. `FORCE_COLOR=1` forces colour on.
+density — `.` constant, `:` slow, `+` active, `*` busy, `#` noisy — so the
+shape survives a log file or a colour-blind reader. `FORCE_COLOR=1` forces colour on.
 
 The strip is sized to your terminal; wider terminals show more bits. A `›` at
 the end means the payload continues past what fits, which is normal for CAN FD
@@ -216,7 +216,8 @@ the end means the payload continues past what fits, which is normal for CAN FD
 Reading these pays off quickly. On the EV6, `0x210`–`0x212` all open with
 **two solid red bytes** — sixteen bits flipping almost every frame at the head
 of the payload, which is what a CRC looks like. On the Prius, every message
-above shares the byte-0 pattern `##+++++:`.
+above shares the byte-0 pattern `##**+++:` — the same descending gradient,
+which is a field boundary showing itself.
 
 ### Bit order: Intel by default
 
@@ -229,23 +230,38 @@ changes** — same entropies, same classes, same totals, just a different column
 order. Only the display and the bit indices move:
 
 ```
-intel     ##+++++: #+++++++ .##++##+ +++++::: .:..+#++ ++++..++ +:.+++++ ###++##+
-motorola  :+++++## +++++++# +##++##. :::+++++ ++#+..:. ++..++++ +++++.:+ +##++###
+intel     ##**+++: #***++++ .##**##* *++++::: .:..+#** ++++..++ +:.***** ###**##*
+motorola  :+++**## ++++***# *##**##. :::++++* **#+..:. ++..++++ *****.:+ *##**###
 ```
 
 Pick the one matching the convention you will write your signal definitions
 in, so a bit index you note down means the same thing later.
 
-### The four bit classes
+### The five bit classes
 
-- **constant** — never changes. Padding, reserved fields, or a value fixed for
-  this drive.
-- **slow** — changes on under 1% of frames. Door open, gear position, warning
-  lamps.
-- **active** — changes at a moderate rate. Where physical quantities live:
-  speed, angle, temperature.
-- **noisy** — changes on 40%+ of frames, about as often as a coin flip. Counter
-  low bits and CRCs look like this.
+Ordered by how much the bit moves:
+
+| class | colour | glyph | transition rate | typically |
+|---|---|---|---|---|
+| `constant` | white | `.` | never | padding, reserved, fixed for this drive |
+| `slow` | blue | `:` | ≤ 1% | door open, gear, warning lamps |
+| `active` | green | `+` | 1–10% | upper bits of a numeric value |
+| `busy` | yellow | `*` | 10–40% | lower bits of a moving value |
+| `noisy` | red | `#` | ≥ 40% | counter LSBs, CRCs |
+
+The `active`/`busy` boundary is what makes **field structure** visible. A
+numeric signal's transition rate falls with bit significance, so a field shows
+up as a gradient running from noisy at its LSB to slow at its MSB:
+
+```
+bus 1 0x210   ##**+++:  #***++++  .##**##*  ...
+              ^^^^^^^^
+              one field: # # * * + + + :
+```
+
+Pooled over 24 corpus segments, mean transition rate by bit position within a
+byte runs `.343 .242 .180 .151 .137 .132 .121 .105` — monotonically down from
+LSB to MSB, which is why the gradient is readable at all.
 
 That last row above is worth an eye: `0x276` has **99 constant bits** out of
 256 and only 1 slow bit. Two-fifths of its payload never moves — a strong hint
@@ -254,8 +270,8 @@ before any inference runs.
 
 ### These thresholds are heuristics
 
-The cutoffs (`SLOW_MAX_RATE = 0.01`, `NOISY_MIN_RATE = 0.40`,
-`CYCLIC_MAX_SPREAD = 0.25`) exist to *partition work*, not to settle
+The cutoffs (`SLOW_MAX_RATE = 0.01`, `BUSY_MIN_RATE = 0.10`,
+`NOISY_MIN_RATE = 0.40`, `CYCLIC_MAX_SPREAD = 0.25`) exist to *partition work*, not to settle
 questions. They live in `canlens.analyze.bits` and `canlens.analyze.timing`
 and are meant to be tuned. A `noisy` bit is a candidate for a counter or CRC —
 confirming which is the inference layer's job, and it re-tests from scratch.

@@ -19,6 +19,12 @@ from canlens.analyze import (
     profile_timing,
     transition_rate,
 )
+from canlens.analyze.bits import (
+    BUSY_MIN_RATE,
+    KIND_ORDER,
+    NOISY_MIN_RATE,
+    SLOW_MAX_RATE,
+)
 from canlens.decode import CanFrame
 
 
@@ -87,7 +93,26 @@ class TestClassifyBits:
         assert classify_bits(np.array([0.001]), np.array([0.5])) == [BitKind.SLOW]
 
     def test_middling_bit_is_active(self):
-        assert classify_bits(np.array([0.1]), np.array([0.5])) == [BitKind.ACTIVE]
+        assert classify_bits(np.array([0.05]), np.array([0.5])) == [BitKind.ACTIVE]
+
+    def test_often_flipping_bit_is_busy(self):
+        assert classify_bits(np.array([0.25]), np.array([0.9])) == [BitKind.BUSY]
+
+    def test_busy_sits_between_active_and_noisy(self):
+        rates = np.array([0.02, 0.25, 0.80])
+        entropy = np.array([0.5, 0.9, 1.0])
+        assert classify_bits(rates, entropy) == [
+            BitKind.ACTIVE,
+            BitKind.BUSY,
+            BitKind.NOISY,
+        ]
+
+    def test_boundaries_are_inclusive_upwards(self):
+        # A rate exactly on a threshold belongs to the busier class.
+        entropy = np.array([0.5])
+        assert classify_bits(np.array([BUSY_MIN_RATE]), entropy) == [BitKind.BUSY]
+        assert classify_bits(np.array([NOISY_MIN_RATE]), entropy) == [BitKind.NOISY]
+        assert classify_bits(np.array([SLOW_MAX_RATE]), entropy) == [BitKind.SLOW]
 
 
 class TestProfileBits:
@@ -202,3 +227,34 @@ class TestBitOrder:
     def test_analyze_frames_passes_the_order_down(self):
         profile = analyze_frames(frames([b"\x01"] * 4), order=BitOrder.MOTOROLA)
         assert profile[(0, 0x123)].bits.order is BitOrder.MOTOROLA
+
+
+class TestKindOrder:
+    def test_lists_every_kind_exactly_once(self):
+        assert set(KIND_ORDER) == set(BitKind)
+        assert len(KIND_ORDER) == len(BitKind)
+
+    def test_runs_from_least_to_most_movement(self):
+        assert KIND_ORDER == (
+            BitKind.CONSTANT,
+            BitKind.SLOW,
+            BitKind.ACTIVE,
+            BitKind.BUSY,
+            BitKind.NOISY,
+        )
+
+    def test_thresholds_do_not_overlap(self):
+        assert SLOW_MAX_RATE < BUSY_MIN_RATE < NOISY_MIN_RATE
+
+
+class TestCounterLadder:
+    """A counter's bits fan out across the classes by significance."""
+
+    def test_counter_bits_descend_through_the_classes(self):
+        payloads = [bytes([i % 256]) for i in range(1024)]
+        kinds = profile_bits(payloads, width=1).kinds  # Intel: index 0 is the LSB
+        # Rate halves per bit, so the classification must be monotonic:
+        # no bit may be busier than the one below it.
+        ranks = [KIND_ORDER.index(k) for k in kinds]
+        assert ranks == sorted(ranks, reverse=True), kinds
+        assert kinds[0] is BitKind.NOISY

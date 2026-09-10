@@ -10,6 +10,7 @@ layer up.
 """
 
 from .bits import (
+    KIND_ORDER,
     BitKind,
     BitOrder,
     BitProfile,
@@ -23,6 +24,7 @@ from .timing import Cadence, TimingProfile, profile_timing
 from .trace import MessageProfile, TraceProfile, analyze_frames, analyze_segment
 
 __all__ = [
+    "KIND_ORDER",
     "BitKind",
     "BitOrder",
     "BitProfile",
