@@ -108,7 +108,7 @@ third-party package is skipped entirely.
 | `corpus/` | manifest, selective fetch, local accounting — **working** |
 | `decode/` | `rlog.zst` → normalised CAN records — **working** |
 | `analyze/` | single-trace timing, entropy, per-bit classification — **working** |
-| `infer/` | counters + 8-bit checksums — **working**; boundaries, 16-bit CRCs, muxes to do |
+| `infer/` | counters, checksums, CRC16 + E2E Profile 5 — **working**; boundaries, muxes to do |
 | `corroborate/` | cross-segment and cross-platform agreement |
 | `truth/` | opendbc ground truth, scoring the inference engine |
 

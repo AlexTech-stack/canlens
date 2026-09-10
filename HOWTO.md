@@ -354,7 +354,8 @@ also have been seen holding at least half its possible values.
 
 **Checksums** are only reported when a named algorithm *reproduces* the byte.
 The library is `sum8`, `sum8_complement`, `xor8`, `toyota`, and CRC-8 with
-polynomials 0x07, 0x1D (SAE J1850), and 0x2F. The simplest algorithm that
+polynomials 0x07, 0x1D (SAE J1850), and 0x2F; 16-bit CRCs are searched
+separately (see below). The simplest algorithm that
 works wins, so a plain sum is never dressed up as a CRC.
 
 `xor8` reports as ambiguous, shown `xor8@?`. XOR is self-inverse: if byte 7 is
@@ -363,21 +364,48 @@ position verifies, and a single trace cannot say which one the protocol calls
 the checksum. The last byte is reported by convention and every candidate
 position is kept.
 
-### Known gap: only 8-bit checksums
+### 16-bit CRCs and AUTOSAR E2E Profile 5
 
-Run the same command on the EV6 and the difference is stark: **163 counters,
-zero checksums.** But its messages open with two solid red bytes —
+Parameters follow AUTOSAR_PRS_E2EProtocol (FO R19-11). `Crc_CalculateCRC16` is
+CCITT-FALSE — polynomial 0x1021, start 0xFFFF, no final XOR — and
+[PRS_E2E_00400] names it as Profile 5's CRC. Per [PRS_E2E_00401] the CRC
+covers the payload *excluding the CRC bytes*, extended at the end with the
+**Data ID**; Figure 6.54 fixes the order as ID low byte then high byte, and
+Figure 6.55 stores the CRC little-endian.
+
+The Data ID is the interesting part: it is *implicitly sent* — it never
+appears on the wire — so a trace cannot read it. It can be **solved for**. A
+CRC is deterministic, so the observed value constrains the two appended bytes;
+inverting a single CRC step recovers them in 256 steps rather than sweeping
+65536 candidates, and intersecting a handful of frames leaves exactly one
+Data ID.
+
+On the EV6 this cracks the whole bus:
 
 ```
-[KIA_EV6] 0x210
+[KIA_EV6] 0x211
   ######## ######## ##**+++: ...
-                    CCCCCCCC
+  XXXXXXXX XXXXXXXX CCCCCCCC
+
+  crc16    bytes 0-1, e2e_p05, little-endian, data ID 0xFA11
+           ████████████████████ 100.0% (1199/1199 frames)
 ```
 
-— sixteen bits that flip almost every frame, with the counter immediately
-after. That is a **16-bit** CRC, and every algorithm in the library is 8-bit,
-so nothing matches. The counter is found; the checksum is not. Widening the
-search to 16-bit CRCs is the obvious next piece of work.
+A 16-bit CRC then an 8-bit counter — textbook Profile 5, and exactly the shape
+the bit map showed before anything was inferred. **162 of 237 messages** carry
+one, all at 100%.
+
+And the recovered Data IDs are not arbitrary:
+
+| address | Data ID |
+|---|---|
+| 0x051 | 0xF851 |
+| 0x201 | 0xFA01 |
+| 0x2A4 | 0xFAA4 |
+
+`data_id == (0xF8 + (addr >> 8)) << 8 | (addr & 0xFF)` — which holds for
+**162 of 162**. Each message's Data ID was solved independently, and they all
+land on one rule.
 
 This is also a preview of why the corpus matters: `toyota@7 100%` holding
 across 69 messages of one segment is suggestive, but holding across thousands
@@ -476,7 +504,7 @@ even though development happens on 3.14.
 | `corpus/` | working — manifest, selective fetch, local accounting |
 | `decode/` | working — `rlog.zst` → `CanFrame` |
 | `analyze/` | working — timing, entropy, per-bit classification |
-| `infer/` | counters and 8-bit checksums working; 16-bit CRCs, signal boundaries and multiplexors still to do |
+| `infer/` | counters, 8-bit checksums, 16-bit CRCs and E2E Profile 5 Data IDs working; signal boundaries and multiplexors still to do |
 | `corroborate/` | **not implemented** — cross-segment and cross-platform agreement |
 | `truth/` | **not implemented** — opendbc ground truth, scoring the engine |
 

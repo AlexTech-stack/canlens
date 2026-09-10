@@ -14,6 +14,7 @@ from ..analyze.bits import BitOrder, BitProfile, bit_matrix, profile_bits
 from ..decode import CanFrame, iter_frames
 from .checksums import ChecksumHypothesis, find_checksums
 from .counters import CounterHypothesis, find_counters
+from .crc16 import Crc16Hypothesis, find_crc16
 
 # A checksum byte is indistinguishable from noise by construction, so only
 # bytes that move like noise are worth testing. This screen is what keeps a
@@ -24,6 +25,13 @@ from .counters import CounterHypothesis, find_counters
 # quarter. Testing a counter byte and rejecting it costs almost nothing, while
 # skipping a real checksum costs a finding, so the cutoff sits under that.
 CHECKSUM_BYTE_MIN_RATE = 0.20
+
+# Deliberately the same as the 8-bit screen, not stricter. A CRC byte is
+# uniformly random and averages about 0.5, so 0.35 looks safe -- but it drops
+# real findings: five EV6 messages carry an E2E Profile 5 CRC verifying at
+# 100% whose bytes fall below it. Since the early exit in the scan made the
+# extra positions nearly free, recall wins.
+CRC16_BYTE_MIN_RATE = CHECKSUM_BYTE_MIN_RATE
 
 
 @dataclass
@@ -37,6 +45,7 @@ class MessageInference:
     bits: BitProfile
     counters: list[CounterHypothesis] = field(default_factory=list)
     checksums: list[ChecksumHypothesis] = field(default_factory=list)
+    crc16s: list[Crc16Hypothesis] = field(default_factory=list)
 
     @property
     def key(self) -> tuple[int, int]:
@@ -44,7 +53,7 @@ class MessageInference:
 
     @property
     def found_anything(self) -> bool:
-        return bool(self.counters or self.checksums)
+        return bool(self.counters or self.checksums or self.crc16s)
 
     def __str__(self) -> str:
         return f"bus {self.bus} 0x{self.address:03X}"
@@ -71,6 +80,8 @@ def infer_message(
     width = len(payloads[0]) if payloads else 0
     bits = profile_bits(list(payloads), width, order)
     matrix = bit_matrix(list(payloads), width, order)
+    candidates = set(checksum_candidate_bytes(bits))
+    crc16_candidates = set(checksum_candidate_bytes(bits, min_rate=CRC16_BYTE_MIN_RATE))
     return MessageInference(
         bus=bus,
         address=address,
@@ -81,8 +92,14 @@ def infer_message(
         checksums=find_checksums(
             payloads,
             address,
-            candidate_bytes=checksum_candidate_bytes(bits),
+            candidate_bytes=sorted(candidates),
             **kwargs.get("checksum_options", {}),
+        ),
+        # A 16-bit CRC needs two adjacent bytes that both move like noise.
+        crc16s=find_crc16(
+            payloads,
+            candidate_bytes=[s for s in crc16_candidates if s + 1 in crc16_candidates],
+            **kwargs.get("crc16_options", {}),
         ),
     )
 

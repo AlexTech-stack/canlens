@@ -110,13 +110,28 @@ class ChecksumHypothesis:
 
 
 def score_algorithm(
-    payloads: Sequence[bytes], address: int, index: int, fn: ChecksumFn
+    payloads: Sequence[bytes], address: int, index: int, fn: ChecksumFn, min_match: float = 0.0
 ) -> float:
-    """Fraction of frames whose byte `index` the algorithm reproduces."""
-    if not payloads:
+    """Fraction of frames whose byte `index` the algorithm reproduces.
+
+    Abandoned as soon as `min_match` is out of reach. Nearly every candidate is
+    wrong and fails on the first frame or two, so scoring the rest is waste --
+    this is most of the difference between a segment sweep taking half a minute
+    and taking a second.
+    """
+    total = len(payloads)
+    if not total:
         return 0.0
-    hits = sum(1 for p in payloads if fn(p, address, index) == p[index])
-    return hits / len(payloads)
+    budget = total - int(min_match * total)
+    hits = misses = 0
+    for payload in payloads:
+        if fn(payload, address, index) == payload[index]:
+            hits += 1
+        else:
+            misses += 1
+            if misses > budget:
+                return hits / total
+    return hits / total
 
 
 def find_checksums(
@@ -145,9 +160,9 @@ def find_checksums(
         if not 0 <= index < width:
             continue
         for name, fn in ALGORITHMS.items():
-            if score_algorithm(screen, address, index, fn) < min_match:
+            if score_algorithm(screen, address, index, fn, min_match) < min_match:
                 continue
-            rate = score_algorithm(payloads, address, index, fn)
+            rate = score_algorithm(payloads, address, index, fn, min_match)
             if rate >= min_match:
                 hits.setdefault(name, []).append((index, rate))
                 break  # first (simplest) algorithm that works wins

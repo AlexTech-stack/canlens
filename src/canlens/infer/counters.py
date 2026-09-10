@@ -72,6 +72,7 @@ def find_counters(
     max_length: int = 8,
     min_match: float = 0.95,
     min_coverage: float = 0.5,
+    min_lsb_rate: float = 0.40,
 ) -> list[CounterHypothesis]:
     """Scan every field position for one that advances by a constant step.
 
@@ -90,15 +91,24 @@ def find_counters(
     Longer fields win: the low four bits of an eight-bit counter are themselves
     a perfectly good four-bit counter, so a candidate contained within an
     already-accepted longer one is dropped rather than reported twice.
+
+    Start positions are prefiltered on the least significant bit. Because the
+    step must be coprime with a power-of-two width it is necessarily odd, so
+    the field's lowest bit changes on *every* increment: a counter cannot begin
+    at a bit that is not itself noisy. On a 32-byte CAN FD payload that removes
+    most of the 250-odd candidate offsets before any arithmetic happens.
     """
     frames, bits = matrix.shape
     if frames < 2:
         return []
 
+    lsb_rates = (np.diff(matrix.astype(np.int8), axis=0) != 0).mean(axis=0)
+    starts = [s for s in range(bits) if lsb_rates[s] >= min_lsb_rate]
+
     found: list[CounterHypothesis] = []
     for length in range(max_length, min_length - 1, -1):
         modulus = 1 << length
-        for start in range(bits - length + 1):
+        for start in (s for s in starts if s + length <= bits):
             values = field_values(matrix, start, length)
             stride, rate = score_counter(values, length)
             if stride == 0 or rate < min_match:

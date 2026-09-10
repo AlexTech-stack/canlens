@@ -225,3 +225,30 @@ class TestInferFrames:
         results = infer_frames(self.frames(payloads))
         assert results[0].width == 2
         assert results[0].frames == 200
+
+
+class TestCounterPrefilter:
+    """A counter's step is odd, so its lowest bit must flip every frame."""
+
+    def test_prefilter_does_not_lose_a_real_counter(self):
+        from canlens.infer.counters import find_counters as fc
+
+        m = matrix_of(counting_payloads())
+        assert fc(m) == fc(m, min_lsb_rate=0.0)
+
+    def test_a_field_whose_lsb_is_quiet_is_not_a_counter(self):
+        # High nibble ramps, low nibble constant: the low bit never moves.
+        payloads = [bytes([(i % 16) << 4]) for i in range(300)]
+        assert all(c.start_bit != 0 for c in find_counters(matrix_of(payloads)))
+
+
+class TestEarlyExit:
+    """Abandoning hopeless candidates must not change any verdict."""
+
+    def test_score_algorithm_matches_the_exhaustive_count(self):
+        payloads = TestFindChecksums.build("sum8", 0x123, n=100)
+        fn = ALGORITHMS["sum8"]
+        assert score_algorithm(payloads, 0x123, 7, fn, 0.99) == 1.0
+        # A hopeless candidate returns something below the threshold, which is
+        # all the caller uses it for.
+        assert score_algorithm(payloads, 0x123, 7, ALGORITHMS["xor8"], 0.99) < 0.99

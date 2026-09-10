@@ -174,7 +174,8 @@ def cmd_infer_trace(args) -> int:
     print(
         f"{len(results)} messages examined, {len(hits)} with findings: "
         f"{sum(len(m.counters) for m in hits)} counters, "
-        f"{sum(len(m.checksums) for m in hits)} checksums"
+        f"{sum(len(m.checksums) for m in hits)} checksums, "
+        f"{sum(len(m.crc16s) for m in hits)} 16-bit CRCs"
     )
     if not hits:
         return 0
@@ -187,8 +188,16 @@ def cmd_infer_trace(args) -> int:
             for c in m.counters
         )
         checks = ", ".join(
-            f"{s.algorithm}@{'?' if s.ambiguous else s.byte_index} {s.match_rate:.0%}"
-            for s in m.checksums
+            [
+                f"{s.algorithm}@{'?' if s.ambiguous else s.byte_index} {s.match_rate:.0%}"
+                for s in m.checksums
+            ]
+            + [
+                f"{c.algorithm}@{c.start_byte}"
+                + (f"/id{c.data_id:04X}" if c.data_id is not None else "")
+                + f" {c.match_rate:.0%}"
+                for c in m.crc16s
+            ]
         )
         if len(counters) > 33:
             counters = counters[:32] + "\u2026"
@@ -231,9 +240,12 @@ def cmd_infer_message(args) -> int:
     marks: dict[int, str] = {}
     for c in result.counters:
         marks.update(dict.fromkeys(range(c.start_bit, c.end_bit), FIELD_MARKS["counter"]))
-    for s in result.checksums:
-        marks.update(dict.fromkeys(range(s.start_bit, s.start_bit + s.length),
-                                   FIELD_MARKS["checksum"]))
+    spans = [(s.start_bit, s.length) for s in result.checksums]
+    spans += [(c.start_bit, c.length) for c in result.crc16s]
+    for start_bit, length in spans:
+        marks.update(
+            dict.fromkeys(range(start_bit, start_bit + length), FIELD_MARKS["checksum"])
+        )
 
     print(f"  {bit_strip(result.bits.kinds, color=color)}")
     if marks:
@@ -254,6 +266,12 @@ def cmd_infer_message(args) -> int:
         print(f"\n  checksum byte {s.byte_index}, algorithm {s.algorithm}")
         print(f"           {bar(s.match_rate)} {s.match_rate:.1%} "
               f"({round(s.match_rate * s.frames)}/{s.frames} frames)")
+    for crc in result.crc16s:
+        ident = "" if crc.data_id is None else f", data ID 0x{crc.data_id:04X}"
+        print(f"\n  crc16    bytes {crc.start_byte}-{crc.start_byte + 1}, {crc.algorithm}, "
+              f"{crc.byteorder}-endian{ident}")
+        print(f"           {bar(crc.match_rate)} {crc.match_rate:.1%} "
+              f"({round(crc.match_rate * crc.frames)}/{crc.frames} frames)")
     if not result.found_anything:
         print("\n  no counter or checksum reproduced this message")
 
