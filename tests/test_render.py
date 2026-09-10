@@ -9,12 +9,16 @@ import pytest
 from canlens.analyze.bits import BitKind as K
 from canlens.render import (
     BACKGROUNDS,
+    BLOCKS,
     GLYPHS,
     RESET,
     TRUNCATED,
+    bar,
     bit_strip,
     bits_that_fit,
+    field_ruler,
     legend,
+    sparkline,
     strip_width,
     supports_color,
 )
@@ -91,3 +95,50 @@ class TestLegend:
         text = legend(color=False)
         for kind in K:
             assert str(kind) in text
+
+
+class TestSparkline:
+    def test_one_block_per_sample(self):
+        assert len(sparkline([0, 1, 2, 3], width=64)) == 4
+
+    def test_a_ramp_rises_monotonically(self):
+        line = sparkline(list(range(8)), width=64)
+        assert line == BLOCKS
+
+    def test_a_constant_series_is_flat(self):
+        assert sparkline([5] * 6) == BLOCKS[0] * 6
+
+    def test_takes_the_first_samples_rather_than_decimating(self):
+        # Decimating a counter aliases the saw teeth into noise.
+        assert sparkline(list(range(100)), width=8) == BLOCKS
+
+    def test_empty(self):
+        assert sparkline([]) == ""
+
+
+class TestBar:
+    def test_full_and_empty(self):
+        assert bar(1.0, 10) == "█" * 10
+        assert bar(0.0, 10) == "░" * 10
+
+    def test_width_is_constant(self):
+        for fraction in (0.0, 0.37, 0.5, 0.99, 1.0):
+            assert len(bar(fraction, 20)) == 20
+
+    def test_clamps_out_of_range_input(self):
+        assert bar(2.0, 5) == "█" * 5
+        assert bar(-1.0, 5) == "░" * 5
+
+
+class TestFieldRuler:
+    def test_aligns_with_the_bit_strip(self):
+        kinds = [K.CONSTANT] * 16
+        ruler = field_ruler({0: "C"}, 16)
+        assert len(ruler) == len(bit_strip(kinds, color=False))
+
+    def test_marks_only_the_named_bits(self):
+        ruler = field_ruler(dict.fromkeys(range(8), "C"), 16)
+        assert ruler == "CCCCCCCC" + " " + " " * 8
+
+    def test_unmarked_bits_are_blank(self):
+        assert field_ruler({}, 8) == " " * 8

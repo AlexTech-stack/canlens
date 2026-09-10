@@ -164,6 +164,104 @@ def cmd_analyze_trace(args) -> int:
     return 0
 
 
+def cmd_infer_trace(args) -> int:
+    from .analyze import BitOrder
+    from .infer import infer_segment
+
+    results = infer_segment(args.path, root=args.root, order=BitOrder(args.order))
+    hits = [m for m in results if m.found_anything]
+    print(f"{_platform_label(args.root, args.path)}{args.path}")
+    print(
+        f"{len(results)} messages examined, {len(hits)} with findings: "
+        f"{sum(len(m.counters) for m in hits)} counters, "
+        f"{sum(len(m.checksums) for m in hits)} checksums"
+    )
+    if not hits:
+        return 0
+    print(f"\n{'message':<14}{'frames':>7}  {'counters':<35}checksums")
+    for m in hits[: args.top]:
+        counters = ", ".join(
+            f"{c.length}b@{c.start_bit}"
+            + ("" if c.stride == 1 else f"/{c.stride}")
+            + f" {c.match_rate:.0%}"
+            for c in m.counters
+        )
+        checks = ", ".join(
+            f"{s.algorithm}@{'?' if s.ambiguous else s.byte_index} {s.match_rate:.0%}"
+            for s in m.checksums
+        )
+        if len(counters) > 33:
+            counters = counters[:32] + "\u2026"
+        print(f"{m!s:<14}{m.frames:>7}  {counters or '-':<35}{checks or '-'}")
+    if len(hits) > args.top:
+        print(f"... and {len(hits) - args.top} more (use --top)")
+    return 0
+
+
+def cmd_infer_message(args) -> int:
+    import shutil
+
+    from .analyze import BitOrder
+    from .analyze.bits import bit_matrix
+    from .decode import iter_frames
+    from .infer import infer_message
+    from .infer.counters import field_values
+    from .render import FIELD_MARKS, bar, bit_strip, field_ruler, legend, sparkline, supports_color
+
+    order = BitOrder(args.order)
+    color = supports_color() and not args.no_color
+    address = int(args.address, 0)
+
+    payloads = [
+        f.data
+        for f in iter_frames(args.path, root=args.root)
+        if f.address == address and (args.bus is None or f.bus == args.bus)
+    ]
+    if not payloads:
+        where = "" if args.bus is None else f" on bus {args.bus}"
+        print(f"canlens: no frames for 0x{address:X}{where} in {args.path}", file=sys.stderr)
+        return 1
+    width = max(set(map(len, payloads)), key=[len(p) for p in payloads].count)
+    payloads = [p for p in payloads if len(p) == width]
+
+    result = infer_message(payloads, bus=args.bus or 0, address=address, order=order)
+    print(f"{_platform_label(args.root, args.path)}0x{address:03X}")
+    print(f"{result.frames} frames x {width} bytes, {order} bit order\n")
+
+    marks: dict[int, str] = {}
+    for c in result.counters:
+        marks.update(dict.fromkeys(range(c.start_bit, c.end_bit), FIELD_MARKS["counter"]))
+    for s in result.checksums:
+        marks.update(dict.fromkeys(range(s.start_bit, s.start_bit + s.length),
+                                   FIELD_MARKS["checksum"]))
+
+    print(f"  {bit_strip(result.bits.kinds, color=color)}")
+    if marks:
+        print(f"  {field_ruler(marks, result.bits.bits)}")
+
+    # Default the plot to whatever the terminal can actually show, so a long
+    # counter wraps visibly instead of spilling over the edge.
+    samples = args.samples or max(16, shutil.get_terminal_size((110, 24)).columns - 12)
+
+    matrix = bit_matrix(payloads, width, order)
+    for c in result.counters:
+        values = field_values(matrix, c.start_bit, c.length).tolist()
+        print(f"\n  counter  {c.length} bits @ bit {c.start_bit}, step {c.stride}, "
+              f"wraps every {c.period}")
+        print(f"           {sparkline(values, samples)}")
+        print(f"           {bar(c.match_rate)} {c.match_rate:.1%} of steps")
+    for s in result.checksums:
+        print(f"\n  checksum byte {s.byte_index}, algorithm {s.algorithm}")
+        print(f"           {bar(s.match_rate)} {s.match_rate:.1%} "
+              f"({round(s.match_rate * s.frames)}/{s.frames} frames)")
+    if not result.found_anything:
+        print("\n  no counter or checksum reproduced this message")
+
+    marks_key = "   ".join(f"{v} {k}" for k, v in FIELD_MARKS.items())
+    print(f"\n{legend(color)}   {marks_key}")
+    return 0
+
+
 def cmd_corpus_which(args) -> int:
     manifest = _manifest(args.root)
     for path in args.path:
@@ -240,6 +338,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--no-color", action="store_true", help="never emit ANSI colour")
     p.set_defaults(func=cmd_analyze_trace)
+
+    infer = sub.add_parser("infer", help="find counters and checksums")
+    iops = infer.add_subparsers(dest="op", required=True)
+
+    for name, func, help_text in (
+        ("trace", cmd_infer_trace, "every finding in one segment"),
+        ("message", cmd_infer_message, "one message in detail, with graphs"),
+    ):
+        p = iops.add_parser(name, help=help_text)
+        p.add_argument("path", help="path to rlog.zst")
+        p.add_argument(
+            "--order",
+            choices=[o.value for o in BitOrder],
+            default=BitOrder.INTEL.value,
+            help="payload bit numbering (default: %(default)s)",
+        )
+        if name == "trace":
+            p.add_argument("--top", type=int, default=30, help="rows to print (default: 30)")
+        else:
+            p.add_argument("--address", required=True, help="CAN address, e.g. 0x210")
+            p.add_argument("--bus", type=int, help="restrict to one bus")
+            p.add_argument(
+                "--samples", type=int, help="counter samples to plot (default: fit the terminal)"
+            )
+            p.add_argument("--no-color", action="store_true", help="never emit ANSI colour")
+        p.set_defaults(func=func)
 
     return parser
 

@@ -285,12 +285,112 @@ absolute millisecond threshold.
 
 ---
 
-## 5. From Python
+## 5. Infer
+
+`analyze` measures. `infer` makes claims — and only ones it has **checked**
+against the trace.
+
+```bash
+canlens infer trace <segment>/rlog.zst
+```
+
+```
+[TOYOTA_PRIUS] .../464/rlog.zst
+167 messages examined, 69 with findings: 79 counters, 69 checksums
+
+message        frames  counters                           checksums
+bus 0 0x024      4984  -                                  toyota@7 100%
+bus 1 0x210      1200  8b@0 100%                          toyota@7 100%
+```
+
+`8b@0` is an 8-bit counter starting at bit 0; a `/n` suffix marks a step other
+than 1. Percentages are the fraction of the trace the hypothesis reproduces —
+they are the whole point, and a finding below 100% deserves a look.
+
+### One message, in detail
+
+```bash
+canlens infer message <segment>/rlog.zst --address 0x210 --bus 1
+```
+
+```
+[TOYOTA_PRIUS] 0x210
+1200 frames x 8 bytes, intel bit order
+
+  ##**+++: #***++++ .##**##* *++++::: .:..+#** ++++..++ +:.***** ###**##*
+  CCCCCCCC                                                       XXXXXXXX
+
+  counter  8 bits @ bit 0, step 1, wraps every 256
+           ▁▁▁▁▁▁▁▂▂▂▂▂▂▂▂▂▂▂▂▃▃▃▃▃▃▃▃▃▃▃▃▃▄▄▄▄▄▄▄▄▄▄▄▄▅▅▅▅▅▅▅▅▅▅▅▅▆▆▆▆▆▆▆▆▆▆▆▆▆▇▇▇▇▇▇▇▇▇▇▇▇███████
+           ████████████████████ 100.0% of steps
+
+  checksum byte 7, algorithm toyota
+           ████████████████████ 100.0% (1200/1200 frames)
+```
+
+Three things are stacked deliberately. The **ruler** (`C` counter, `X`
+checksum) sits directly under the bit map, character for character, so a
+claimed field can be checked against the measured bits above it. The
+**sparkline** plots the field's actual values — a counter's saw teeth make it
+self-evident, and the first samples are drawn rather than the series
+decimated, because decimating a counter aliases it into noise. The **bar** is
+the match rate.
+
+Note how `##**+++:` under `CCCCCCCC` is exactly the gradient an incrementing
+byte must produce: bit 0 flips every frame, bit 1 every second, and so on down
+to bit 7 flipping once per 128. The measurement and the inference were
+computed independently and agree.
+
+Widen the plot with `--samples` to see the counter wrap.
+
+### What is and is not claimed
+
+**Counters** must advance by a constant step *and* walk their whole range. Two
+filters enforce that. The step must be coprime with the field width — without
+it, a single toggling bit at the top of an n-bit window is a mathematically
+perfect counter of step 2^(n-1) that only ever holds two values, and every
+even step on a power-of-two field is a version of that mistake. The field must
+also have been seen holding at least half its possible values.
+
+**Checksums** are only reported when a named algorithm *reproduces* the byte.
+The library is `sum8`, `sum8_complement`, `xor8`, `toyota`, and CRC-8 with
+polynomials 0x07, 0x1D (SAE J1850), and 0x2F. The simplest algorithm that
+works wins, so a plain sum is never dressed up as a CRC.
+
+`xor8` reports as ambiguous, shown `xor8@?`. XOR is self-inverse: if byte 7 is
+the XOR of bytes 0-6, then byte 0 is equally the XOR of bytes 1-7. Every
+position verifies, and a single trace cannot say which one the protocol calls
+the checksum. The last byte is reported by convention and every candidate
+position is kept.
+
+### Known gap: only 8-bit checksums
+
+Run the same command on the EV6 and the difference is stark: **163 counters,
+zero checksums.** But its messages open with two solid red bytes —
+
+```
+[KIA_EV6] 0x210
+  ######## ######## ##**+++: ...
+                    CCCCCCCC
+```
+
+— sixteen bits that flip almost every frame, with the counter immediately
+after. That is a **16-bit** CRC, and every algorithm in the library is 8-bit,
+so nothing matches. The counter is found; the checksum is not. Widening the
+search to 16-bit CRCs is the obvious next piece of work.
+
+This is also a preview of why the corpus matters: `toyota@7 100%` holding
+across 69 messages of one segment is suggestive, but holding across thousands
+of segments from hundreds of different drivers is proof — and that is
+`corroborate`'s job, not `infer`'s.
+
+## 6. From Python
 
 ```python
 from canlens.corpus import Manifest
 from canlens.decode import iter_frames
 from canlens.analyze import BitKind, analyze_segment
+from canlens.infer import infer_segment
 
 root = "~/data/canlens"
 
@@ -311,6 +411,13 @@ for message in profile.by_entropy()[:10]:
 bits = profile[(0, 0x211)].bits
 noisy = [i for i, k in enumerate(bits.kinds) if k is BitKind.NOISY]
 print("counter/CRC candidates at bit positions:", noisy)
+
+# Tested claims, not candidates
+for message in infer_segment(path, root=root):
+    for counter in message.counters:
+        print(message, counter)      # "8-bit counter @ bit 0 (100.0%)"
+    for checksum in message.checksums:
+        print(message, checksum)     # "toyota @ byte 7 (100.0%)"
 ```
 
 Bit numbering is **MSB-first within each byte**, matching how CAN signal
@@ -319,7 +426,7 @@ byte 0.
 
 ---
 
-## 6. Gotchas
+## 7. Gotchas
 
 **Mixed payload lengths.** When a message's length varies, bit statistics are
 computed over the *dominant* length only and the row is flagged with `*`.
@@ -342,7 +449,7 @@ short.
 
 ---
 
-## 7. Development
+## 8. Development
 
 ```bash
 ./.venv/bin/pytest -q
@@ -369,7 +476,7 @@ even though development happens on 3.14.
 | `corpus/` | working — manifest, selective fetch, local accounting |
 | `decode/` | working — `rlog.zst` → `CanFrame` |
 | `analyze/` | working — timing, entropy, per-bit classification |
-| `infer/` | **not implemented** — signal boundaries, counters, CRCs, multiplexors |
+| `infer/` | counters and 8-bit checksums working; 16-bit CRCs, signal boundaries and multiplexors still to do |
 | `corroborate/` | **not implemented** — cross-segment and cross-platform agreement |
 | `truth/` | **not implemented** — opendbc ground truth, scoring the engine |
 

@@ -98,3 +98,47 @@ def legend(color: bool = True) -> str:
         mark = f"{BACKGROUNDS[kind]} {RESET}" if color else GLYPHS[kind]
         parts.append(f"{mark} {kind}")
     return "  ".join(parts)
+
+
+# Eighth-block characters: a counter's ramp is unmistakable as a sawtooth, and
+# a field that merely looks busy is unmistakably not one.
+BLOCKS = "▁▂▃▄▅▆▇█"
+
+FIELD_MARKS = {"counter": "C", "checksum": "X"}
+
+
+def sparkline(values: list[int] | list[float], width: int = 64) -> str:
+    """Draw a value series as block characters, one per sample.
+
+    The first `width` samples are drawn rather than the whole series
+    downsampled: a counter aliases into noise if you decimate it, and the
+    point of the picture is to show the saw teeth.
+    """
+    shown = list(values[:width])
+    if not shown:
+        return ""
+    lo, hi = min(shown), max(shown)
+    if hi == lo:
+        return BLOCKS[0] * len(shown)
+    scale = len(BLOCKS) - 1
+    return "".join(BLOCKS[round((v - lo) / (hi - lo) * scale)] for v in shown)
+
+
+def bar(fraction: float, width: int = 20) -> str:
+    """A proportion as a filled bar."""
+    filled = round(max(0.0, min(1.0, fraction)) * width)
+    return "█" * filled + "░" * (width - filled)
+
+
+def field_ruler(marks: dict[int, str], bits: int, *, group: int = 8) -> str:
+    """A line aligned under a bit strip, marking which bits belong to a field.
+
+    Uses the same byte spacing as `bit_strip`, so the two line up character for
+    character however wide the payload is.
+    """
+    out = []
+    for i in range(bits):
+        if i and group and i % group == 0:
+            out.append(" ")
+        out.append(marks.get(i, " "))
+    return "".join(out)
