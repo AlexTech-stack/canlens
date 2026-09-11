@@ -12,8 +12,10 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..analyze import TraceProfile, analyze_frames
+from ..analyze.bits import BitOrder, bit_matrix
 from ..decode import iter_frames
 from ..infer import MessageInference, infer_frames
+from ..infer.counters import field_values, score_counter
 from .palette import kinds_to_indices
 
 # CAN's 11-bit identifier space. Anything above it must be a 29-bit extended
@@ -74,6 +76,10 @@ class SegmentModel:
     platform: str | None
     profile: TraceProfile
     rows: list[MessageRow] = field(default_factory=list)
+    # Payloads are kept so a bit selection can be replotted without going back
+    # to the file. Decoding a segment takes seconds; a drag must not.
+    payloads: dict[tuple[int, int], list[bytes]] = field(default_factory=dict)
+    _matrix_cache: tuple[int, np.ndarray] | None = field(default=None, repr=False)
 
     @property
     def bit_width(self) -> int:
@@ -106,6 +112,42 @@ class SegmentModel:
                 marks.append((i, "extended"))
         return marks
 
+    def matrix_for(self, index: int) -> np.ndarray:
+        """Bit matrix for one message, cached for the row being looked at."""
+        if self._matrix_cache is not None and self._matrix_cache[0] == index:
+            return self._matrix_cache[1]
+        row = self.rows[index]
+        matrix = bit_matrix(self.payloads.get(row.key, []), row.width, BitOrder.INTEL)
+        self._matrix_cache = (index, matrix)
+        return matrix
+
+    def field_series(self, index: int, start: int, length: int) -> np.ndarray:
+        """Values of an arbitrary bit range, frame by frame."""
+        matrix = self.matrix_for(index)
+        if matrix.size == 0 or start < 0 or start + length > matrix.shape[1] or length <= 0:
+            return np.zeros(0, dtype=np.int64)
+        return field_values(matrix, start, length)
+
+    def field_summary(self, index: int, start: int, length: int) -> str:
+        """One line describing a selection, including whether it counts.
+
+        Runs the same stride test the inference layer uses, so a range picked
+        by hand is judged on exactly the criteria a reported counter was.
+        """
+        values = self.field_series(index, start, length)
+        if values.size == 0:
+            return "—"
+        stride, rate = score_counter(values, length)
+        distinct = int(np.unique(values).size)
+        text = (
+            f"bits {start}–{start + length - 1} ({length})   "
+            f"min {int(values.min())}   max {int(values.max())}   "
+            f"{distinct} distinct"
+        )
+        if stride and rate >= 0.95:
+            text += f"   counts by {stride} on {rate:.0%} of frames"
+        return text
+
     def bus_groups(self) -> list[tuple[int, int, int]]:
         """(bus, first row, last row exclusive) for each contiguous bus block."""
         groups: list[tuple[int, int, int]] = []
@@ -136,6 +178,10 @@ def load_segment(
     profile = analyze_frames(frames)
     inferences = {m.key: m for m in infer_frames(frames)} if infer else {}
 
+    payloads: dict[tuple[int, int], list[bytes]] = {}
+    for frame in frames:
+        payloads.setdefault((frame.bus, frame.address), []).append(frame.data)
+
     rows = [
         MessageRow(
             key=message.key,
@@ -151,6 +197,15 @@ def load_segment(
     ]
     # Ordered by identifier, never by entropy: see MessageRow.sort_key.
     rows.sort(key=lambda row: row.sort_key)
+    # Only the dominant payload length, matching how the bit stats were pooled.
+    for row_ in rows:
+        payloads[row_.key] = [p for p in payloads[row_.key] if len(p) == row_.width]
+
     return SegmentModel(
-        path=path, root=root, platform=platform, profile=profile, rows=rows
+        path=path,
+        root=root,
+        platform=platform,
+        profile=profile,
+        rows=rows,
+        payloads=payloads,
     )

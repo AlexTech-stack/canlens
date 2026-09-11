@@ -245,3 +245,80 @@ class TestBusTicks:
 
     def test_empty(self):
         assert bus_ticks([]) == [[], []]
+
+
+def model_with_payloads(payloads, width=2):
+    """A one-message model carrying real payloads, for selection tests."""
+    from canlens.analyze.bits import BitOrder, profile_bits
+    from canlens.gui.palette import kinds_to_indices
+
+    key = (0, 0x100)
+    bits = profile_bits(payloads, width, BitOrder.INTEL)
+    r = MessageRow(
+        key=key, label="bus 0 0x100", width=width, count=len(payloads),
+        period_ms=10.0, entropy=bits.payload_entropy,
+        kinds=kinds_to_indices(bits.kinds),
+    )
+    return SegmentModel("p", "r", None, None, [r], payloads={key: payloads})
+
+
+class TestFieldSeries:
+    """Selecting an arbitrary bit range must read it the way a DBC would."""
+
+    def test_reads_a_byte(self):
+        m = model_with_payloads([bytes([i, 0]) for i in range(16)])
+        assert m.field_series(0, 0, 8).tolist() == list(range(16))
+
+    def test_reads_a_nibble(self):
+        m = model_with_payloads([bytes([0x3C, 0]) for _ in range(4)])
+        assert m.field_series(0, 0, 4).tolist() == [0xC] * 4   # Intel: low first
+        assert m.field_series(0, 4, 4).tolist() == [0x3] * 4
+
+    def test_reads_across_a_byte_boundary(self):
+        m = model_with_payloads([bytes([0xFF, 0x01]) for _ in range(3)])
+        assert m.field_series(0, 4, 8).tolist() == [0x1F] * 3
+
+    def test_range_past_the_payload_is_empty_not_an_error(self):
+        m = model_with_payloads([bytes([1, 2])])
+        assert m.field_series(0, 12, 8).size == 0
+
+    def test_zero_and_negative_lengths_are_empty(self):
+        m = model_with_payloads([bytes([1, 2])])
+        assert m.field_series(0, 0, 0).size == 0
+        assert m.field_series(0, -1, 4).size == 0
+
+
+class TestFieldSummary:
+    def test_describes_the_range_and_its_values(self):
+        m = model_with_payloads([bytes([i, 0]) for i in range(256)])
+        text = m.field_summary(0, 0, 8)
+        assert "bits 0–7 (8)" in text
+        assert "min 0" in text and "max 255" in text and "256 distinct" in text
+
+    def test_says_when_a_hand_picked_range_counts(self):
+        # The same stride test the inference layer uses, on a manual selection.
+        m = model_with_payloads([bytes([i, 0]) for i in range(256)])
+        assert "counts by 1" in m.field_summary(0, 0, 8)
+
+    def test_stays_quiet_when_it_does_not_count(self):
+        import random
+        rng = random.Random(3)
+        m = model_with_payloads([bytes([rng.randrange(256), 0]) for _ in range(200)])
+        assert "counts by" not in m.field_summary(0, 0, 8)
+
+    def test_empty_selection(self):
+        m = model_with_payloads([bytes([1, 2])])
+        assert m.field_summary(0, 99, 8) == "—"
+
+
+class TestMatrixCache:
+    def test_repeated_reads_of_one_row_reuse_the_matrix(self):
+        m = model_with_payloads([bytes([i, 0]) for i in range(32)])
+        first = m.matrix_for(0)
+        assert m.matrix_for(0) is first
+
+    def test_values_are_unchanged_by_caching(self):
+        m = model_with_payloads([bytes([i, 0]) for i in range(32)])
+        before = m.field_series(0, 0, 8).tolist()
+        m.matrix_for(0)
+        assert m.field_series(0, 0, 8).tolist() == before

@@ -157,6 +157,8 @@ class BitStripView(pg.PlotWidget):
     read off against the bit axis.
     """
 
+    selection_changed = QtCore.Signal(int, int)
+
     def __init__(self) -> None:
         super().__init__()
         self.setMenuEnabled(False)
@@ -166,6 +168,37 @@ class BitStripView(pg.PlotWidget):
         self._image = pg.ImageItem(axisOrder="row-major")
         self.addItem(self._image)
         self._overlays: list[pg.GraphicsObject] = []
+        self._bits = 0
+        self._snapping = False
+
+        # Drag to define a field by hand. Whole bits only: a selection running
+        # from 3.7 to 8.2 describes nothing, so the edges snap on every change
+        # rather than only when the drag ends.
+        self.selector = pg.LinearRegionItem(
+            values=(0, 8),
+            brush=pg.mkBrush(255, 255, 255, 38),
+            hoverBrush=pg.mkBrush(255, 255, 255, 60),
+            pen=pg.mkPen("#ffffff", width=2),
+        )
+        self.selector.setZValue(20)
+        self.addItem(self.selector)
+        self.selector.sigRegionChanged.connect(self._snap)
+
+    def _snap(self) -> None:
+        """Round the selection to whole bits and announce it."""
+        if self._snapping or not self._bits:
+            return
+        # getRegion returns plain Python numbers, so round() already gives int.
+        low, high = self.selector.getRegion()
+        start = max(0, min(round(low), self._bits - 1))
+        end = max(start + 1, min(round(high), self._bits))
+        self._snapping = True
+        self.selector.setRegion((start, end))
+        self._snapping = False
+        self.selection_changed.emit(start, end - start)
+
+    def set_selection(self, start: int, length: int) -> None:
+        self.selector.setRegion((start, start + length))
 
     def show_row(self, model: SegmentModel, index: int) -> None:
         for item in self._overlays:
@@ -173,6 +206,7 @@ class BitStripView(pg.PlotWidget):
         self._overlays.clear()
 
         row = model.rows[index]
+        self._bits = row.bits
         table = lookup_table()
         rgba = np.zeros((1, row.bits, 4), dtype=np.ubyte)
         rgba[0, :, :3] = table[row.kinds]
@@ -196,6 +230,7 @@ class BitStripView(pg.PlotWidget):
             self.addItem(label)
             self._overlays.append(label)
 
+        self.selector.setBounds((0, row.bits))
         self.getPlotItem().getAxis("bottom").setTicks(byte_ticks(row.bits))
         self.getPlotItem().setLimits(xMin=-1, xMax=row.bits + 1, yMin=-1.2, yMax=2.2)
         self.setXRange(0, row.bits, padding=0.01)
@@ -215,7 +250,12 @@ class DetailPanel(QtWidgets.QWidget):
         layout.addWidget(self.heading)
 
         self.strip = BitStripView()
+        self.strip.selection_changed.connect(self._on_selection)
         layout.addWidget(self.strip)
+
+        self.selection = QtWidgets.QLabel("—")
+        self.selection.setStyleSheet("color: #9fb4d0; font-family: monospace;")
+        layout.addWidget(self.selection)
 
         self.findings = QtWidgets.QTextEdit()
         self.findings.setReadOnly(True)
@@ -228,8 +268,27 @@ class DetailPanel(QtWidgets.QWidget):
         self.plot.getPlotItem().setLabel("bottom", "frame")
         layout.addWidget(self.plot, stretch=1)
 
+        self._model: SegmentModel | None = None
+        self._index = 0
+
+    def _on_selection(self, start: int, length: int) -> None:
+        """Replot for a hand-picked bit range.
+
+        Cheap enough to run live while dragging because the payloads are held
+        in the model; nothing here goes back to the trace file.
+        """
+        if self._model is None:
+            return
+        self.selection.setText(self._model.field_summary(self._index, start, length))
+        self.plot.clear()
+        values = self._model.field_series(self._index, start, length)
+        if values.size:
+            self.plot.plot(values, pen=pg.mkPen("#5abeff", width=1))
+
     def show_row(self, model: SegmentModel, index: int) -> None:
         row = model.rows[index]
+        self._model = model
+        self._index = index
         self.strip.show_row(model, index)
         self.heading.setText(
             f"{row.label}   {row.count} frames x {row.width} bytes"
@@ -242,29 +301,15 @@ class DetailPanel(QtWidgets.QWidget):
             lines += [f"crc16     {c}" for c in row.inference.crc16s]
         self.findings.setPlainText("\n".join(lines) or "no counter or checksum reproduced this message")
 
-        self.plot.clear()
+        # Start on the most interesting known field, so the plot says something
+        # before the first drag; any range can be selected from there.
         if row.inference is not None and row.inference.counters:
             counter = row.inference.counters[0]
-            self.plot.plot(
-                _counter_series(model, index, counter.start_bit, counter.length),
-                pen=pg.mkPen("#5abeff", width=1),
-            )
-
-
-def _counter_series(model: SegmentModel, index: int, start: int, length: int) -> np.ndarray:
-    """Recover a counter's values for plotting, re-reading the payloads."""
-    from ..analyze.bits import BitOrder, bit_matrix
-    from ..decode import iter_frames
-    from ..infer.counters import field_values
-
-    row = model.rows[index]
-    payloads = [
-        f.data
-        for f in iter_frames(model.path, root=model.root)
-        if (f.bus, f.address) == row.key and len(f.data) == row.width
-    ]
-    matrix = bit_matrix(payloads, row.width, BitOrder.INTEL)
-    return field_values(matrix, start, length)
+            start, length = counter.start_bit, counter.length
+        else:
+            start, length = 0, min(8, row.bits)
+        self.strip.set_selection(start, length)
+        self._on_selection(start, length)
 
 
 class Workbench(QtWidgets.QMainWindow):

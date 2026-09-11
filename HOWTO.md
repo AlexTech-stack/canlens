@@ -468,7 +468,9 @@ Everything the CLI prints, arranged for the reverse-engineering loop:
   bus change and the step into extended IDs
 - **strip** — the selected message magnified, with inferred counter and
   checksum fields outlined and labelled
-- **bottom** — findings, and the counter's real values plotted over time
+- **selection** — drag on the strip to pick any bit range; the plot and the
+  summary line follow live
+- **bottom** — findings, and the selected field's values over time
 
 The matrix is drawn with pyqtgraph's `ImageItem`, which takes the bit classes
 as a numpy array directly. That is why this is a desktop app rather than a web
@@ -479,6 +481,31 @@ The magnified strip exists because of a scale problem worth knowing about. At
 186 messages a single row of the matrix is under three pixels tall, so a field
 overlay drawn there is invisible however correct its coordinates are. The
 matrix is the map; the strip is the detail.
+
+### Selecting a field by hand
+
+Drag on the magnified strip to select any range of bits. The line beneath
+reports what you picked and what is in it:
+
+```
+bits 16–27 (12)   min 2   max 3912   648 distinct
+bits 0–7 (8)      min 0   max 255    256 distinct   counts by 1 on 100% of frames
+```
+
+The counter test is the same one `infer` uses, so a range picked by hand is
+judged on exactly the criteria a reported counter was — it will tell you when
+your guess counts, and stay quiet when it does not.
+
+Selection snaps to whole bits: a range from 3.7 to 8.2 describes nothing.
+Opening a message seeds the selection from its most interesting inferred
+field, so the plot says something before the first drag.
+
+This is the loop for finding signals the inference layer cannot name. Pick a
+run of `active` bits, watch the plot, and see whether it moves like a speed, a
+temperature or an angle.
+
+Replotting is instant because the payloads are held in memory once the segment
+is decoded — a drag never goes back to the trace file.
 
 **Row order is by identifier, deliberately.** Entropy ordering would put the
 most interesting messages on top, but it is not stable: the same bus recorded

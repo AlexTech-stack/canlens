@@ -79,3 +79,49 @@ class TestViewsPinLevels:
 
         source = inspect.getsource(window)
         assert source.count("levels=(0, 255)") == 2
+
+
+class TestBitSelection:
+    """Dragging a range must describe whole bits and nothing else."""
+
+    @pytest.fixture
+    def strip(self, qt_app):
+        from canlens.gui.model import MessageRow, SegmentModel
+        from canlens.gui.window import BitStripView
+
+        key = (0, 0x100)
+        payloads = [bytes([i, 0]) for i in range(64)]
+        row = MessageRow(
+            key=key, label="bus 0 0x100", width=2, count=64,
+            period_ms=10.0, entropy=1.0, kinds=np.zeros(16, dtype=np.uint8),
+        )
+        model = SegmentModel("p", "r", None, None, [row], payloads={key: payloads})
+        view = BitStripView()
+        view.show_row(model, 0)
+        return view
+
+    def test_fractional_drags_snap_to_whole_bits(self, strip):
+        strip.selector.setRegion((3.7, 8.2))
+        assert strip.selector.getRegion() == (4, 8)
+
+    def test_emits_start_and_length_not_start_and_end(self, strip):
+        seen = []
+        strip.selection_changed.connect(lambda s, n: seen.append((s, n)))
+        strip.selector.setRegion((2.4, 9.6))
+        # Snaps to bits 2..10 exclusive, which is a length of 8.
+        assert strip.selector.getRegion() == (2, 10)
+        assert seen[-1] == (2, 8)
+
+    def test_a_collapsed_selection_keeps_one_bit(self, strip):
+        strip.selector.setRegion((5.0, 5.0))
+        start, end = strip.selector.getRegion()
+        assert end - start == 1
+
+    def test_selection_cannot_leave_the_payload(self, strip):
+        strip.selector.setRegion((-20, 500))
+        start, end = strip.selector.getRegion()
+        assert start >= 0 and end <= 16
+
+    def test_set_selection_round_trips(self, strip):
+        strip.set_selection(3, 5)
+        assert strip.selector.getRegion() == (3, 8)
