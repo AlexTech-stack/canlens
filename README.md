@@ -110,6 +110,7 @@ third-party package is skipped entirely.
 | `analyze/` | single-trace timing, entropy, per-bit classification — **working** |
 | `infer/` | counters, checksums, CRC16 + E2E Profile 5 — **working**; boundaries, muxes to do |
 | `corroborate/` | cross-segment and cross-platform agreement |
+| `gui/` | desktop workbench — **v0 working** |
 | `truth/` | opendbc ground truth, scoring the inference engine |
 
 ## Related

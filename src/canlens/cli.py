@@ -280,6 +280,16 @@ def cmd_infer_message(args) -> int:
     return 0
 
 
+def cmd_gui(args) -> int:
+    try:
+        from .gui.window import run
+    except ImportError as exc:
+        print(f"canlens: the workbench needs the gui extra: pip install 'canlens[gui]' ({exc})",
+              file=sys.stderr)
+        return 2
+    return run(args.root)
+
+
 def cmd_corpus_which(args) -> int:
     manifest = _manifest(args.root)
     for path in args.path:
@@ -382,6 +392,9 @@ def build_parser() -> argparse.ArgumentParser:
             )
             p.add_argument("--no-color", action="store_true", help="never emit ANSI colour")
         p.set_defaults(func=func)
+
+    p = sub.add_parser("gui", help="open the desktop workbench")
+    p.set_defaults(func=cmd_gui, op=None)
 
     return parser
 

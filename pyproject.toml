@@ -81,6 +81,15 @@ traces = [
     "python-can>=4.3",
 ]
 
+# Desktop workbench. pyqtgraph is the reason this is a Qt app rather than a
+# web one: its ImageItem takes the bit matrix as a numpy array and gives pan,
+# zoom and ROI selection back, with no serialisation between the analysis and
+# the pixels.
+gui = [
+    "PySide6>=6.7",
+    "pyqtgraph>=0.13",
+]
+
 dev = [
     "pytest>=8",
     "pytest-cov>=5",
@@ -90,7 +99,7 @@ dev = [
 
 # Everything except dev, for a working install in one line.
 all = [
-    "canlens[decode,store,truth,traces]",
+    "canlens[decode,store,truth,traces,gui]",
 ]
 
 [project.urls]
@@ -121,5 +130,5 @@ files = ["src"]
 # capnp ships no py.typed; compression.zstd only exists on 3.14, and mypy is
 # pinned to the 3.11 floor so it cannot see it.
 [[tool.mypy.overrides]]
-module = ["capnp", "capnp.*", "zstandard", "compression.zstd"]
+module = ["capnp", "capnp.*", "zstandard", "compression.zstd", "pyqtgraph", "pyqtgraph.*"]
 ignore_missing_imports = true

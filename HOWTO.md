@@ -454,7 +454,38 @@ byte 0.
 
 ---
 
-## 7. Gotchas
+## 7. The workbench
+
+```bash
+pip install -e ".[gui]" && canlens gui
+```
+
+Everything the CLI prints, arranged for the reverse-engineering loop:
+
+- **left** — every locally fetched segment, labelled by platform
+- **centre** — the whole bus as one bit matrix, rows sorted by payload entropy,
+  so the messages worth attacking are at the top
+- **strip** — the selected message magnified, with inferred counter and
+  checksum fields outlined and labelled
+- **bottom** — findings, and the counter's real values plotted over time
+
+The matrix is drawn with pyqtgraph's `ImageItem`, which takes the bit classes
+as a numpy array directly. That is why this is a desktop app rather than a web
+one: the analysis already produces the array the renderer wants, so there is no
+serialisation step between them.
+
+The magnified strip exists because of a scale problem worth knowing about. At
+186 messages a single row of the matrix is under three pixels tall, so a field
+overlay drawn there is invisible however correct its coordinates are. The
+matrix is the map; the strip is the detail.
+
+Headless check, the same way BoAt verifies its Qt client:
+
+```bash
+QT_QPA_PLATFORM=offscreen canlens gui
+```
+
+## 8. Gotchas
 
 **Mixed payload lengths.** When a message's length varies, bit statistics are
 computed over the *dominant* length only and the row is flagged with `*`.
@@ -477,7 +508,7 @@ short.
 
 ---
 
-## 8. Development
+## 9. Development
 
 ```bash
 ./.venv/bin/pytest -q
