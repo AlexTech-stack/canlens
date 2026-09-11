@@ -17,6 +17,7 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets
 
 from ..corpus import Manifest, segment_dest
+from .axes import byte_ticks
 from .model import SegmentModel, load_segment
 from .palette import BACKGROUND, CHECKSUM_RGBA, COUNTER_RGBA, lookup_table
 
@@ -40,7 +41,7 @@ class BitMatrixView(pg.PlotWidget):
         self.setMenuEnabled(False)
         self.getPlotItem().invertY(True)
         self.getPlotItem().setLabel("bottom", "payload bit")
-        self.getPlotItem().setLabel("left", "message")
+        self.getPlotItem().setLabel("left", "message (by identifier)")
 
         self._image = pg.ImageItem(axisOrder="row-major")
         self.addItem(self._image)
@@ -56,6 +57,7 @@ class BitMatrixView(pg.PlotWidget):
         self.addItem(self._highlight)
 
         self._overlays: list[pg.GraphicsObject] = []
+        self._dividers: list[pg.GraphicsObject] = []
         self._model: SegmentModel | None = None
         self.scene().sigMouseClicked.connect(self._on_click)
 
@@ -71,11 +73,41 @@ class BitMatrixView(pg.PlotWidget):
         rgba[present, :3] = table[grid[present]]
         rgba[present, 3] = 255
         self._image.setImage(rgba)
+        self.getPlotItem().getAxis("bottom").setTicks(byte_ticks(model.bit_width))
+        self._draw_dividers(model)
         self.getPlotItem().setLimits(
             xMin=0, xMax=model.bit_width, yMin=0, yMax=max(len(model.rows), 1)
         )
         self.autoRange()
         self.select_row(0)
+
+    def _draw_dividers(self, model: SegmentModel) -> None:
+        """Rules between buses, and where extended identifiers begin."""
+        for item in self._dividers:
+            self.removeItem(item)
+        self._dividers.clear()
+        for index, label in model.separators():
+            extended = label == "extended"
+            line = pg.InfiniteLine(
+                pos=index,
+                angle=0,
+                pen=pg.mkPen(
+                    "#ff9f43" if extended else "#8b93a1",
+                    width=2,
+                    style=QtCore.Qt.PenStyle.SolidLine
+                    if extended
+                    else QtCore.Qt.PenStyle.DashLine,
+                ),
+                label=label,
+                labelOpts={
+                    "position": 0.02,
+                    "color": "#ff9f43" if extended else "#8b93a1",
+                    "movable": False,
+                },
+            )
+            line.setZValue(8)
+            self.addItem(line)
+            self._dividers.append(line)
 
     def select_row(self, index: int) -> None:
         if self._model is None or not self._model.rows:
@@ -154,6 +186,7 @@ class BitStripView(pg.PlotWidget):
             self.addItem(label)
             self._overlays.append(label)
 
+        self.getPlotItem().getAxis("bottom").setTicks(byte_ticks(row.bits))
         self.getPlotItem().setLimits(xMin=-1, xMax=row.bits + 1, yMin=-1.2, yMax=2.2)
         self.setXRange(0, row.bits, padding=0.01)
         self.setYRange(-0.6, 1.6, padding=0)

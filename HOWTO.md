@@ -463,8 +463,9 @@ pip install -e ".[gui]" && canlens gui
 Everything the CLI prints, arranged for the reverse-engineering loop:
 
 - **left** — every locally fetched segment, labelled by platform
-- **centre** — the whole bus as one bit matrix, rows sorted by payload entropy,
-  so the messages worth attacking are at the top
+- **centre** — the whole bus as one bit matrix, rows ordered **by identifier**:
+  standard IDs ascending, then extended, grouped by bus. Dividers mark each
+  bus change and the step into extended IDs
 - **strip** — the selected message magnified, with inferred counter and
   checksum fields outlined and labelled
 - **bottom** — findings, and the counter's real values plotted over time
@@ -478,6 +479,25 @@ The magnified strip exists because of a scale problem worth knowing about. At
 186 messages a single row of the matrix is under three pixels tall, so a field
 overlay drawn there is invisible however correct its coordinates are. The
 matrix is the map; the strip is the detail.
+
+**Row order is by identifier, deliberately.** Entropy ordering would put the
+most interesting messages on top, but it is not stable: the same bus recorded
+twice sorts differently, so two snippets of one drive cannot be read row
+against row. Identifier order is fixed by construction — verified across three
+real segments, where every shared message keeps the same relative position.
+The CLI's `analyze trace` still sorts by entropy, because there the question
+is "where do I start", not "how do these compare".
+
+**Extended identifiers are inferred, not read.** openpilot's `CanData` carries
+`address`, `dat` and `src` and no IDE flag, so anything above 0x7FF must be a
+29-bit identifier — but an extended frame using a low identifier is
+indistinguishable from a standard one in this format. The divider marks what
+the data can actually support.
+
+Bit axes tick on **byte boundaries** (8, 16, 24 …), never pyqtgraph's default
+decimal steps, which put gridlines through the middle of bytes. A 32-byte CAN
+FD payload has too many boundaries to label, so the labels thin to every 16 or
+32 bits and the rest stay as unlabelled minor ticks.
 
 Headless check, the same way BoAt verifies its Qt client:
 

@@ -16,6 +16,13 @@ from ..decode import iter_frames
 from ..infer import MessageInference, infer_frames
 from .palette import kinds_to_indices
 
+# CAN's 11-bit identifier space. Anything above it must be a 29-bit extended
+# identifier -- but the converse does not hold, and this data cannot tell:
+# openpilot's CanData carries `address`, `dat` and `src` and no IDE flag, so an
+# extended frame that happens to use a low identifier is indistinguishable from
+# a standard one here. The split below is the best the format allows.
+STANDARD_ID_MAX = 0x7FF
+
 
 @dataclass
 class MessageRow:
@@ -33,6 +40,29 @@ class MessageRow:
     @property
     def bits(self) -> int:
         return int(self.kinds.size)
+
+    @property
+    def bus(self) -> int:
+        return self.key[0]
+
+    @property
+    def address(self) -> int:
+        return self.key[1]
+
+    @property
+    def extended(self) -> bool:
+        """Whether this identifier can only be a 29-bit extended one."""
+        return self.address > STANDARD_ID_MAX
+
+    @property
+    def sort_key(self) -> tuple[int, int, int]:
+        """Bus, then standard identifiers ascending, then extended ascending.
+
+        Stable across segments by construction, which entropy ordering is not:
+        the same bus recorded twice must lay out identically, or two snippets
+        of one drive cannot be compared row against row.
+        """
+        return (self.bus, int(self.extended), self.address)
 
 
 @dataclass
@@ -60,6 +90,21 @@ class SegmentModel:
         for i, row in enumerate(self.rows):
             grid[i, : row.bits] = row.kinds
         return grid
+
+    def separators(self) -> list[tuple[int, str]]:
+        """Rows a divider should be drawn above, and what it divides.
+
+        Two kinds: a change of bus, and the step from standard identifiers to
+        extended ones within a bus.
+        """
+        marks = []
+        for i in range(1, len(self.rows)):
+            previous, current = self.rows[i - 1], self.rows[i]
+            if current.bus != previous.bus:
+                marks.append((i, f"bus {current.bus}"))
+            elif current.extended and not previous.extended:
+                marks.append((i, "extended"))
+        return marks
 
     def field_spans(self, index: int) -> list[tuple[int, int, str]]:
         """(start_bit, length, kind) for the fields inferred in one row."""
@@ -91,8 +136,10 @@ def load_segment(
             kinds=kinds_to_indices(message.bits.kinds),
             inference=inferences.get(message.key),
         )
-        for message in profile.by_entropy()
+        for message in profile.messages.values()
     ]
+    # Ordered by identifier, never by entropy: see MessageRow.sort_key.
+    rows.sort(key=lambda row: row.sort_key)
     return SegmentModel(
         path=path, root=root, platform=platform, profile=profile, rows=rows
     )
