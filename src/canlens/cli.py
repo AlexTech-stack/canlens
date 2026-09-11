@@ -280,6 +280,23 @@ def cmd_infer_message(args) -> int:
     return 0
 
 
+def cmd_export_pdu_db(args) -> int:
+    from .export import save_pdu_db
+    from .gui.model import load_segment
+
+    model = load_segment(
+        args.path, root=args.root, platform=_manifest(args.root).platform_of(args.path)
+    )
+    entries = model.export_messages()
+    if not entries:
+        print("canlens: nothing inferred in this segment to export", file=sys.stderr)
+        return 1
+    save_pdu_db(entries, args.output)
+    signals = sum(len(e.signals) for e in entries)
+    print(f"{len(entries)} messages, {signals} signals -> {args.output}")
+    return 0
+
+
 def cmd_gui(args) -> int:
     try:
         from .gui.window import run
@@ -392,6 +409,13 @@ def build_parser() -> argparse.ArgumentParser:
             )
             p.add_argument("--no-color", action="store_true", help="never emit ANSI colour")
         p.set_defaults(func=func)
+
+    export = sub.add_parser("export", help="write findings in other tools' formats")
+    eops = export.add_subparsers(dest="op", required=True)
+    p = eops.add_parser("pdu-db", help="BoAt PDU database JSON")
+    p.add_argument("path", help="path to rlog.zst")
+    p.add_argument("-o", "--output", required=True, help="destination .json")
+    p.set_defaults(func=cmd_export_pdu_db)
 
     p = sub.add_parser("gui", help="open the desktop workbench")
     p.set_defaults(func=cmd_gui, op=None)

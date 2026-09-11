@@ -14,6 +14,7 @@ import numpy as np
 from ..analyze import TraceProfile, analyze_frames
 from ..analyze.bits import BitOrder, bit_matrix
 from ..decode import iter_frames
+from ..export import MessageEntry, SignalEntry
 from ..infer import MessageInference, infer_frames
 from ..infer.counters import field_values, score_counter
 from .palette import kinds_to_indices
@@ -24,6 +25,25 @@ from .palette import kinds_to_indices
 # extended frame that happens to use a low identifier is indistinguishable from
 # a standard one here. The split below is the best the format allows.
 STANDARD_ID_MAX = 0x7FF
+
+
+@dataclass
+class NamedSignal:
+    """A bit range the user has identified and named."""
+
+    name: str
+    start_bit: int
+    length: int
+
+    @property
+    def end_bit(self) -> int:
+        return self.start_bit + self.length
+
+    def overlaps(self, other: NamedSignal) -> bool:
+        return self.start_bit < other.end_bit and other.start_bit < self.end_bit
+
+    def __str__(self) -> str:
+        return f"{self.name}  bits {self.start_bit}–{self.end_bit - 1} ({self.length})"
 
 
 @dataclass
@@ -38,6 +58,7 @@ class MessageRow:
     entropy: float
     kinds: np.ndarray
     inference: MessageInference | None = None
+    signals: list[NamedSignal] = field(default_factory=list)
 
     @property
     def bits(self) -> int:
@@ -147,6 +168,120 @@ class SegmentModel:
         if stride and rate >= 0.95:
             text += f"   counts by {stride} on {rate:.0%} of frames"
         return text
+
+    def name_selection(self, index: int, name: str, start: int, length: int) -> NamedSignal:
+        """Record a named signal, replacing any it overlaps.
+
+        Overlapping definitions of the same bits cannot both be right, and a
+        PDU database that contains both is invalid rather than merely untidy,
+        so naming a range that covers an existing one supersedes it.
+        """
+        row = self.rows[index]
+        signal = NamedSignal(name.strip(), start, length)
+        row.signals = [s for s in row.signals if not s.overlaps(signal)]
+        row.signals.append(signal)
+        row.signals.sort(key=lambda s: s.start_bit)
+        return signal
+
+    def export_messages(self, *, include_inferred: bool = True) -> list[MessageEntry]:
+        """Every message carrying something worth exporting."""
+        entries = []
+        for index, row in enumerate(self.rows):
+            signals = [
+                self._named_entry(index, s) for s in row.signals
+            ]
+            if include_inferred:
+                signals += self._inferred_entries(index, row)
+            if not signals:
+                continue
+            signals.sort(key=lambda s: s.start_bit)
+            timing = self.profile[row.key].timing
+            entries.append(
+                MessageEntry(
+                    bus=row.bus,
+                    address=row.address,
+                    length=row.width,
+                    extended=row.extended,
+                    cyclic=str(timing.cadence) == "cyclic",
+                    cycle_time_ms=timing.period_ms,
+                    e2e_profile=self._e2e_profile(row),
+                    comment=f"derived by canlens from {row.count} frames",
+                    signals=signals,
+                )
+            )
+        return entries
+
+    @staticmethod
+    def _e2e_profile(row: MessageRow) -> int:
+        """AUTOSAR E2E profile number, when one was actually identified."""
+        if row.inference is None:
+            return 0
+        return 5 if any(c.algorithm == "e2e_p05" for c in row.inference.crc16s) else 0
+
+    def _named_entry(self, index: int, signal: NamedSignal) -> SignalEntry:
+        values = self.field_series(index, signal.start_bit, signal.length)
+        return SignalEntry(
+            name=signal.name,
+            start_bit=signal.start_bit,
+            length=signal.length,
+            minimum=float(values.min()) if values.size else 0.0,
+            maximum=float(values.max()) if values.size else 0.0,
+            init_value=float(values[0]) if values.size else 0.0,
+        )
+
+    def _inferred_entries(self, index: int, row: MessageRow) -> list[SignalEntry]:
+        """Counters and checksums as signals, with their evidence in Comment."""
+        if row.inference is None:
+            return []
+        named = {(s.start_bit, s.length) for s in row.signals}
+        out = []
+        for counter in row.inference.counters:
+            out.append(
+                self._derived_entry(
+                    index, "Counter", counter.start_bit, counter.length,
+                    f"canlens: counts by {counter.stride} on "
+                    f"{counter.match_rate:.1%} of {counter.frames} frames",
+                    named,
+                )
+            )
+        for checksum in row.inference.checksums:
+            out.append(
+                self._derived_entry(
+                    index, "Checksum", checksum.start_bit, checksum.length,
+                    f"canlens: {checksum.algorithm} reproduces "
+                    f"{checksum.match_rate:.1%} of {checksum.frames} frames",
+                    named,
+                )
+            )
+        for crc in row.inference.crc16s:
+            detail = "" if crc.data_id is None else f", data ID 0x{crc.data_id:04X}"
+            out.append(
+                self._derived_entry(
+                    index, "CRC", crc.start_bit, crc.length,
+                    f"canlens: {crc.algorithm} {crc.byteorder}-endian{detail}, "
+                    f"reproduces {crc.match_rate:.1%} of {crc.frames} frames",
+                    named,
+                )
+            )
+        return [entry for entry in out if entry is not None]
+
+    def _derived_entry(
+        self, index: int, name: str, start: int, length: int, comment: str,
+        named: set[tuple[int, int]],
+    ) -> SignalEntry | None:
+        # A hand-given name wins: the user looked at it.
+        if (start, length) in named:
+            return None
+        values = self.field_series(index, start, length)
+        return SignalEntry(
+            name=name,
+            start_bit=start,
+            length=length,
+            minimum=float(values.min()) if values.size else 0.0,
+            maximum=float(values.max()) if values.size else 0.0,
+            init_value=float(values[0]) if values.size else 0.0,
+            comment=comment,
+        )
 
     def bus_groups(self) -> list[tuple[int, int, int]]:
         """(bus, first row, last row exclusive) for each contiguous bus block."""

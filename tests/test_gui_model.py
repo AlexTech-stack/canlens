@@ -248,18 +248,27 @@ class TestBusTicks:
 
 
 def model_with_payloads(payloads, width=2):
-    """A one-message model carrying real payloads, for selection tests."""
-    from canlens.analyze.bits import BitOrder, profile_bits
+    """A one-message model built the way load_segment builds one.
+
+    The profile is real rather than stubbed, so anything reading timing or
+    per-message statistics is exercised instead of bypassed.
+    """
+    from canlens.analyze import analyze_frames
+    from canlens.decode import CanFrame
     from canlens.gui.palette import kinds_to_indices
 
     key = (0, 0x100)
-    bits = profile_bits(payloads, width, BitOrder.INTEL)
+    frames = [
+        CanFrame(i * 10_000_000, key[0], key[1], p, False) for i, p in enumerate(payloads)
+    ]
+    profile = analyze_frames(frames)
+    message = profile[key]
     r = MessageRow(
-        key=key, label="bus 0 0x100", width=width, count=len(payloads),
-        period_ms=10.0, entropy=bits.payload_entropy,
-        kinds=kinds_to_indices(bits.kinds),
+        key=key, label="bus 0 0x100", width=width, count=message.count,
+        period_ms=message.timing.period_ms, entropy=message.bits.payload_entropy,
+        kinds=kinds_to_indices(message.bits.kinds),
     )
-    return SegmentModel("p", "r", None, None, [r], payloads={key: payloads})
+    return SegmentModel("p", "r", None, profile, [r], payloads={key: payloads})
 
 
 class TestFieldSeries:
@@ -322,3 +331,63 @@ class TestMatrixCache:
         before = m.field_series(0, 0, 8).tolist()
         m.matrix_for(0)
         assert m.field_series(0, 0, 8).tolist() == before
+
+
+class TestNamedSignals:
+    @staticmethod
+    def model():
+        return model_with_payloads([bytes([i, i ^ 0x5A]) for i in range(64)])
+
+    def test_naming_records_the_selection(self):
+        m = self.model()
+        m.name_selection(0, "VehicleSpeed", 0, 8)
+        assert [s.name for s in m.rows[0].signals] == ["VehicleSpeed"]
+
+    def test_a_name_that_overlaps_supersedes_the_old_one(self):
+        # Two definitions of the same bits cannot both be right, and a PDU
+        # database containing both is invalid rather than merely untidy.
+        m = self.model()
+        m.name_selection(0, "First", 0, 8)
+        m.name_selection(0, "Second", 4, 8)
+        assert [s.name for s in m.rows[0].signals] == ["Second"]
+
+    def test_non_overlapping_names_coexist_in_bit_order(self):
+        m = self.model()
+        m.name_selection(0, "Second", 8, 8)
+        m.name_selection(0, "First", 0, 8)
+        assert [s.name for s in m.rows[0].signals] == ["First", "Second"]
+
+    def test_whitespace_is_trimmed(self):
+        m = self.model()
+        assert m.name_selection(0, "  Speed \n", 0, 8).name == "Speed"
+
+
+class TestExportBridge:
+    @staticmethod
+    def model():
+        return model_with_payloads([bytes([i, i ^ 0x5A]) for i in range(256)])
+
+    def test_named_signals_are_exported_with_their_observed_range(self):
+        m = self.model()
+        m.name_selection(0, "Ramp", 0, 8)
+        entry = m.export_messages()[0]
+        signal = next(s for s in entry.signals if s.name == "Ramp")
+        assert (signal.start_bit, signal.length) == (0, 8)
+        assert signal.minimum == 0.0 and signal.maximum == 255.0
+
+    def test_messages_without_findings_are_skipped(self):
+        m = model_with_payloads([b"\x00\x00"] * 64)
+        assert m.export_messages() == []
+
+    def test_inference_can_be_left_out(self):
+        m = self.model()
+        m.name_selection(0, "Ramp", 0, 8)
+        entry = m.export_messages(include_inferred=False)[0]
+        assert [s.name for s in entry.signals] == ["Ramp"]
+
+    def test_frame_geometry_comes_from_the_message(self):
+        m = self.model()
+        m.name_selection(0, "Ramp", 0, 8)
+        entry = m.export_messages()[0]
+        assert entry.address == 0x100 and entry.length == 2 and entry.bus == 0
+        assert entry.extended is False

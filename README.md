@@ -112,6 +112,7 @@ third-party package is skipped entirely.
 | `corroborate/` | cross-segment and cross-platform agreement |
 | `gui/` | desktop workbench — **v0 working** |
 | `truth/` | opendbc ground truth, scoring the inference engine |
+| `export/` | BoAt PDU-database JSON — **working** |
 
 ## Related
 

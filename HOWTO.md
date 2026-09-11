@@ -507,6 +507,45 @@ temperature or an angle.
 Replotting is instant because the payloads are held in memory once the segment
 is decoded — a drag never goes back to the trace file.
 
+### Naming a field and exporting it
+
+Type a name for the current selection and press Enter. Named signals appear in
+green on the strip and in the list below it. Naming a range that overlaps an
+existing one supersedes it — two definitions of the same bits cannot both be
+right, and a PDU database containing both is invalid rather than merely untidy.
+
+**Export PDU database…** writes BoAt's `pdu_db.schema.json` format
+(schema_version 1.0), so the result loads in BoAt's PDU editor, replays through
+the gateway, or diffs against a database built from a real DBC. Also available
+without the GUI:
+
+```bash
+canlens export pdu-db <segment>/rlog.zst -o prius.json
+```
+
+Everything found goes in, not just what you named. Inferred counters and
+checksums are exported as signals carrying their evidence:
+
+```json
+{
+  "SignalName": "CRC", "Length": 16, "StartPos": 0, "ByteOrder": 0,
+  "Comment": "canlens: e2e_p05 little-endian, data ID 0xFA01, reproduces 100.0% of 1200 frames"
+}
+```
+
+and a message whose CRC identified as Profile 5 is exported with `isE2E: 5` —
+on the EV6 that is 162 of 163 messages.
+
+**`StartPos` needs no translation.** The DBC and Vector convention numbers an
+Intel signal's start bit as `byte_index * 8 + offset_from_that_byte's_LSB`,
+which is exactly what `BitOrder.INTEL` produces. A bit index read off the
+workbench *is* a `StartPos`. The same holds for Motorola. This is the payoff
+from defaulting to Intel numbering earlier.
+
+What a single trace cannot supply is written neutrally rather than guessed:
+`Direction` is 0, both routing columns are null, and `signal_routes` is empty,
+because establishing a route means observing both sides of a gateway.
+
 **Row order is by identifier, deliberately.** Entropy ordering would put the
 most interesting messages on top, but it is not stable: the same bus recorded
 twice sorts differently, so two snippets of one drive cannot be read row

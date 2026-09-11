@@ -17,9 +17,10 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets
 
 from ..corpus import Manifest, segment_dest
+from ..export import save_pdu_db
 from .axes import bus_ticks, byte_ticks
 from .model import SegmentModel, load_segment
-from .palette import BACKGROUND, CHECKSUM_RGBA, COUNTER_RGBA, lookup_table
+from .palette import BACKGROUND, CHECKSUM_RGBA, COUNTER_RGBA, NAMED_RGBA, lookup_table
 
 pg.setConfigOption("background", BACKGROUND)
 pg.setConfigOption("foreground", "#d7dae0")
@@ -215,8 +216,14 @@ class BitStripView(pg.PlotWidget):
         # uniform, and auto-levels would render it black instead of constant.
         self._image.setImage(rgba, levels=(0, 255))
 
-        for start, length, kind in model.field_spans(index):
-            colour = COUNTER_RGBA if kind == "counter" else CHECKSUM_RGBA
+        spans = model.field_spans(index) + [
+            (s.start_bit, s.length, s.name) for s in model.rows[index].signals
+        ]
+        for start, length, kind in spans:
+            colour = {
+                "counter": COUNTER_RGBA,
+                "checksum": CHECKSUM_RGBA,
+            }.get(kind, NAMED_RGBA)
             box = QtWidgets.QGraphicsRectItem(start, -0.35, length, 1.7)
             box.setBrush(pg.mkBrush(colour[0], colour[1], colour[2], 70))
             box.setPen(pg.mkPen(colour[:3], width=2))
@@ -257,6 +264,24 @@ class DetailPanel(QtWidgets.QWidget):
         self.selection.setStyleSheet("color: #9fb4d0; font-family: monospace;")
         layout.addWidget(self.selection)
 
+        naming = QtWidgets.QHBoxLayout()
+        self.name_field = QtWidgets.QLineEdit()
+        self.name_field.setPlaceholderText("name these bits, e.g. VehicleSpeed")
+        self.name_field.returnPressed.connect(self._name_selection)
+        naming.addWidget(self.name_field, stretch=1)
+        self.name_button = QtWidgets.QPushButton("Name signal")
+        self.name_button.clicked.connect(self._name_selection)
+        naming.addWidget(self.name_button)
+        self.forget_button = QtWidgets.QPushButton("Forget")
+        self.forget_button.clicked.connect(self._forget_selected)
+        naming.addWidget(self.forget_button)
+        layout.addLayout(naming)
+
+        self.named = QtWidgets.QListWidget()
+        self.named.setMaximumHeight(78)
+        self.named.currentRowChanged.connect(self._jump_to_named)
+        layout.addWidget(self.named)
+
         self.findings = QtWidgets.QTextEdit()
         self.findings.setReadOnly(True)
         self.findings.setMaximumHeight(110)
@@ -270,6 +295,7 @@ class DetailPanel(QtWidgets.QWidget):
 
         self._model: SegmentModel | None = None
         self._index = 0
+        self._selection = (0, 8)
 
     def _on_selection(self, start: int, length: int) -> None:
         """Replot for a hand-picked bit range.
@@ -279,17 +305,54 @@ class DetailPanel(QtWidgets.QWidget):
         """
         if self._model is None:
             return
+        self._selection = (start, length)
         self.selection.setText(self._model.field_summary(self._index, start, length))
         self.plot.clear()
         values = self._model.field_series(self._index, start, length)
         if values.size:
             self.plot.plot(values, pen=pg.mkPen("#5abeff", width=1))
 
+    def _name_selection(self) -> None:
+        name = self.name_field.text().strip()
+        if self._model is None or not name:
+            return
+        start, length = self._selection
+        self._model.name_selection(self._index, name, start, length)
+        self.name_field.clear()
+        self._refresh_named()
+
+    def _forget_selected(self) -> None:
+        if self._model is None:
+            return
+        index = self.named.currentRow()
+        row = self._model.rows[self._index]
+        if 0 <= index < len(row.signals):
+            del row.signals[index]
+            self._refresh_named()
+
+    def _jump_to_named(self, index: int) -> None:
+        """Selecting a named signal moves the bit selection onto it."""
+        if self._model is None or index < 0:
+            return
+        row = self._model.rows[self._index]
+        if index < len(row.signals):
+            signal = row.signals[index]
+            self.strip.set_selection(signal.start_bit, signal.length)
+
+    def _refresh_named(self) -> None:
+        self.named.clear()
+        if self._model is None:
+            return
+        for signal in self._model.rows[self._index].signals:
+            self.named.addItem(str(signal))
+        self.strip.show_row(self._model, self._index)
+
     def show_row(self, model: SegmentModel, index: int) -> None:
         row = model.rows[index]
         self._model = model
         self._index = index
         self.strip.show_row(model, index)
+        self._refresh_named()
         self.heading.setText(
             f"{row.label}   {row.count} frames x {row.width} bytes"
             f"   {row.period_ms:.1f} ms   {row.entropy:.0f} bits entropy"
@@ -338,6 +401,11 @@ class Workbench(QtWidgets.QMainWindow):
         split.addWidget(right)
         split.setSizes([340, 1100])
         self.setCentralWidget(split)
+
+        bar = self.addToolBar("actions")
+        export = bar.addAction("Export PDU database…")
+        export.triggered.connect(self._export)
+
         self.statusBar().showMessage("ready")
 
         self._model: SegmentModel | None = None
@@ -369,6 +437,26 @@ class Workbench(QtWidgets.QMainWindow):
         self.statusBar().showMessage(
             f"{platform}  —  {len(model.rows)} messages, {model.profile.frames} frames, "
             f"{model.bit_width} bits wide"
+        )
+
+    def _export(self) -> None:
+        """Write everything found -- named and inferred -- as a PDU database."""
+        if self._model is None:
+            return
+        entries = self._model.export_messages()
+        if not entries:
+            self.statusBar().showMessage("nothing to export from this segment")
+            return
+        default = f"{self._model.platform or 'canlens'}_pdu_db.json"
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export PDU database", default, "JSON (*.json)"
+        )
+        if not path:
+            return
+        save_pdu_db(entries, path)
+        signals = sum(len(e.signals) for e in entries)
+        self.statusBar().showMessage(
+            f"wrote {len(entries)} messages, {signals} signals to {path}"
         )
 
     def _on_row(self, index: int) -> None:
