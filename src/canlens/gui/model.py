@@ -106,6 +106,17 @@ class SegmentModel:
                 marks.append((i, "extended"))
         return marks
 
+    def bus_groups(self) -> list[tuple[int, int, int]]:
+        """(bus, first row, last row exclusive) for each contiguous bus block."""
+        groups: list[tuple[int, int, int]] = []
+        for i, row in enumerate(self.rows):
+            if groups and groups[-1][0] == row.bus:
+                bus, start, _ = groups[-1]
+                groups[-1] = (bus, start, i + 1)
+            else:
+                groups.append((row.bus, i, i + 1))
+        return groups
+
     def field_spans(self, index: int) -> list[tuple[int, int, str]]:
         """(start_bit, length, kind) for the fields inferred in one row."""
         row = self.rows[index]

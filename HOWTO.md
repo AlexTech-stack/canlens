@@ -494,6 +494,19 @@ is "where do I start", not "how do these compare".
 indistinguishable from a standard one in this format. The divider marks what
 the data can actually support.
 
+They are also **rare**, which is why a few spot checks will miss them. Across
+211 locally fetched segments, KIA_EV6 has none at all (highest address 0x4FE)
+and TOYOTA_PRIUS has 28, concentrated in a handful of segments. Where they do
+appear they are UDS diagnostics — `0x18DA<target>F1`, the ISO 15765-4 29-bit
+physical addressing scheme, with `0x18DB33F1` as the functional broadcast —
+i.e. a scan tool talking to ECUs, not normal traffic. To find one:
+
+```bash
+canlens corpus which ~/data/canlens/segments/*/*/*/rlog.zst | head
+```
+
+then look for a segment whose bus 2 carries `0x18DAxxF1` addresses.
+
 Bit axes tick on **byte boundaries** (8, 16, 24 …), never pyqtgraph's default
 decimal steps, which put gridlines through the middle of bytes. A 32-byte CAN
 FD payload has too many boundaries to label, so the labels thin to every 16 or

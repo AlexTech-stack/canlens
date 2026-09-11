@@ -32,3 +32,19 @@ def byte_ticks(bits: int, *, max_labels: int = 18) -> list[list[tuple[float, str
         else []
     )
     return [major, minor]
+
+
+def bus_ticks(groups: list[tuple[int, int, int]]) -> list[list[tuple[float, str]]]:
+    """Left-axis labels naming each bus, centred on its block of rows.
+
+    The bus name used to ride on an InfiniteLine inside the view, which put
+    small text on top of the colour matrix where it was barely readable. In the
+    axis margin it has a plain background and room to breathe, and the divider
+    line is left to do nothing but divide.
+
+    `groups` is (bus, first_row, last_row_exclusive).
+    """
+    return [
+        [(float(start + end - 1) / 2, f"bus {bus}") for bus, start, end in groups],
+        [],
+    ]

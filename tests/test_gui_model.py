@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from canlens.analyze.bits import KIND_ORDER, BitKind
-from canlens.gui.axes import byte_ticks
+from canlens.gui.axes import bus_ticks, byte_ticks
 from canlens.gui.model import MessageRow, SegmentModel
 from canlens.gui.palette import KIND_INDEX, KIND_RGB, kinds_to_indices, lookup_table
 
@@ -207,3 +207,41 @@ class TestSeparators:
 
     def test_none_when_everything_is_standard_on_one_bus(self):
         assert self.model([(0, 0x100), (0, 0x200)]).separators() == []
+
+
+class TestBusGroups:
+    @staticmethod
+    def model(keys):
+        return SegmentModel(
+            "p", "r", None, None,
+            sorted((row(k, [0] * 8) for k in keys), key=lambda r: r.sort_key),
+        )
+
+    def test_one_group_per_bus(self):
+        m = self.model([(0, 0x100), (0, 0x200), (1, 0x100), (2, 0x100)])
+        assert m.bus_groups() == [(0, 0, 2), (1, 2, 3), (2, 3, 4)]
+
+    def test_single_bus(self):
+        assert self.model([(0, 0x100), (0, 0x200)]).bus_groups() == [(0, 0, 2)]
+
+    def test_empty(self):
+        assert SegmentModel("p", "r", None, None, []).bus_groups() == []
+
+    def test_groups_cover_every_row_exactly_once(self):
+        m = self.model([(0, 0x100), (1, 0x100), (1, 0x900), (2, 0x100)])
+        covered = [i for _, start, end in m.bus_groups() for i in range(start, end)]
+        assert covered == list(range(len(m.rows)))
+
+
+class TestBusTicks:
+    def test_label_is_centred_on_the_group(self):
+        (major, minor) = bus_ticks([(0, 0, 10)])
+        assert major == [(4.5, "bus 0")]
+        assert minor == []
+
+    def test_one_label_per_bus(self):
+        major, _ = bus_ticks([(0, 0, 4), (1, 4, 10)])
+        assert [text for _, text in major] == ["bus 0", "bus 1"]
+
+    def test_empty(self):
+        assert bus_ticks([]) == [[], []]

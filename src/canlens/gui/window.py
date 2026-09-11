@@ -17,7 +17,7 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets
 
 from ..corpus import Manifest, segment_dest
-from .axes import byte_ticks
+from .axes import bus_ticks, byte_ticks
 from .model import SegmentModel, load_segment
 from .palette import BACKGROUND, CHECKSUM_RGBA, COUNTER_RGBA, lookup_table
 
@@ -41,7 +41,7 @@ class BitMatrixView(pg.PlotWidget):
         self.setMenuEnabled(False)
         self.getPlotItem().invertY(True)
         self.getPlotItem().setLabel("bottom", "payload bit")
-        self.getPlotItem().setLabel("left", "message (by identifier)")
+        self.getPlotItem().setLabel("left", "")
 
         self._image = pg.ImageItem(axisOrder="row-major")
         self.addItem(self._image)
@@ -72,9 +72,14 @@ class BitMatrixView(pg.PlotWidget):
         present = grid >= 0
         rgba[present, :3] = table[grid[present]]
         rgba[present, 3] = 255
-        self._image.setImage(rgba)
+        # levels are pinned because pyqtgraph would otherwise derive them from
+        # the data: a message whose bits are all one class gives a uniform
+        # array, auto-levels come out as (238, 255), and every pixel maps to
+        # black -- a wholly static frame rendered as though it were missing.
+        self._image.setImage(rgba, levels=(0, 255))
         self.getPlotItem().getAxis("bottom").setTicks(byte_ticks(model.bit_width))
         self._draw_dividers(model)
+        self.getPlotItem().getAxis("left").setTicks(bus_ticks(model.bus_groups()))
         self.getPlotItem().setLimits(
             xMin=0, xMax=model.bit_width, yMin=0, yMax=max(len(model.rows), 1)
         )
@@ -88,6 +93,8 @@ class BitMatrixView(pg.PlotWidget):
         self._dividers.clear()
         for index, label in model.separators():
             extended = label == "extended"
+            # A bus change is named by the left axis; only the extended split
+            # needs a label, and it sits at the right edge clear of the data.
             line = pg.InfiniteLine(
                 pos=index,
                 angle=0,
@@ -98,10 +105,11 @@ class BitMatrixView(pg.PlotWidget):
                     if extended
                     else QtCore.Qt.PenStyle.DashLine,
                 ),
-                label=label,
+                label="extended IDs" if extended else None,
                 labelOpts={
-                    "position": 0.02,
-                    "color": "#ff9f43" if extended else "#8b93a1",
+                    "position": 0.88,
+                    "color": "#ff9f43",
+                    "fill": pg.mkBrush(20, 22, 26, 220),
                     "movable": False,
                 },
             )
@@ -169,7 +177,9 @@ class BitStripView(pg.PlotWidget):
         rgba = np.zeros((1, row.bits, 4), dtype=np.ubyte)
         rgba[0, :, :3] = table[row.kinds]
         rgba[0, :, 3] = 255
-        self._image.setImage(rgba)
+        # Pinned for the same reason as the matrix: a fully static payload is
+        # uniform, and auto-levels would render it black instead of constant.
+        self._image.setImage(rgba, levels=(0, 255))
 
         for start, length, kind in model.field_spans(index):
             colour = COUNTER_RGBA if kind == "counter" else CHECKSUM_RGBA
