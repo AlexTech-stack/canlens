@@ -510,7 +510,13 @@ is decoded — a drag never goes back to the trace file.
 ### Naming a field and exporting it
 
 Type a name for the current selection and press Enter. Named signals appear in
-green on the strip and in the list below it. Naming a range that overlaps an
+green on the strip, labelled underneath it, and in the list below.
+
+Labels are packed into lanes: each takes the topmost line whose previous label
+ends before this one begins. On a 32-byte payload a name is twenty-odd bits
+wide at normal zoom, so fields a few bits apart cannot share a line — and the
+lanes repack as you zoom, because a label is drawn at a fixed pixel size while
+a bit is not. Naming a range that overlaps an
 existing one supersedes it — two definitions of the same bits cannot both be
 right, and a PDU database containing both is invalid rather than merely untidy.
 

@@ -26,6 +26,23 @@ pg.setConfigOption("background", BACKGROUND)
 pg.setConfigOption("foreground", "#d7dae0")
 pg.setConfigOption("antialias", False)
 
+# Label lanes below the bit strip.
+#
+# The vertical geometry is pinned to a fixed pixels-per-data-unit contract
+# rather than to data units alone. A TextItem is drawn at a constant pixel
+# size, so a lane spacing expressed only in data units means whatever the
+# current viewbox height happens to make it -- measured at 12px against
+# 25px-tall text, which put the second row of labels straight back on top of
+# the first. Deriving the y range and the widget height from PX_PER_UNIT makes
+# the spacing exactly LANE_PIXELS however the window is sized.
+PX_PER_UNIT = 34.0
+LANE_PIXELS = 18.0
+LANE_HEIGHT = LANE_PIXELS / PX_PER_UNIT
+LABEL_TOP = -0.30
+STRIP_TOP = 1.15
+STRIP_BOTTOM_MARGIN = 0.2
+AXIS_FALLBACK_PX = 34
+
 
 class BitMatrixView(pg.PlotWidget):
     """The whole bus as one image: rows are messages, columns are payload bits.
@@ -163,14 +180,19 @@ class BitStripView(pg.PlotWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setMenuEnabled(False)
-        self.setMaximumHeight(96)
         self.getPlotItem().hideAxis("left")
         self.getPlotItem().setLabel("bottom", "payload bit")
         self._image = pg.ImageItem(axisOrder="row-major")
         self.addItem(self._image)
         self._overlays: list[pg.GraphicsObject] = []
+        self._labels: list[tuple[pg.TextItem, int]] = []
         self._bits = 0
+        self._lanes = 1
         self._snapping = False
+        self._laying_out = False
+        # Lane assignment depends on how many pixels a bit is worth, so it has
+        # to be redone whenever the view is zoomed, panned or resized.
+        self.getPlotItem().vb.sigRangeChanged.connect(self._lay_out_labels)
 
         # Drag to define a field by hand. Whole bits only: a selection running
         # from 3.7 to 8.2 describes nothing, so the edges snap on every change
@@ -184,6 +206,65 @@ class BitStripView(pg.PlotWidget):
         self.selector.setZValue(20)
         self.addItem(self.selector)
         self.selector.sigRegionChanged.connect(self._snap)
+
+    def _lay_out_labels(self) -> None:
+        """Stack field labels into lanes so that none overlap.
+
+        Two fields a few bits apart produce labels far wider than the gap
+        between them, so placing every label on one line guarantees collisions
+        on any busy message. Each label instead takes the topmost lane whose
+        last label ends before this one begins -- the standard greedy
+        interval-packing -- which uses the fewest lanes that fit.
+
+        Widths are measured in pixels and converted through the current view,
+        because a TextItem does not scale with zoom: the same name covers
+        forty bits zoomed out and four zoomed in.
+        """
+        if self._laying_out:
+            return
+        if not self._labels:
+            self._resize_for(1)
+            return
+        view = self.getPlotItem().vb
+        (left, right), _ = view.viewRange()
+        span = max(right - left, 1e-9)
+        pixels_per_bit = max(view.width(), 1) / span
+
+        lane_ends: list[float] = []
+        for label, start in sorted(self._labels, key=lambda pair: pair[1]):
+            width = label.boundingRect().width() / pixels_per_bit
+            for lane, end in enumerate(lane_ends):
+                if start >= end:
+                    lane_ends[lane] = start + width
+                    break
+            else:
+                lane = len(lane_ends)
+                lane_ends.append(start + width)
+            label.setPos(start, LABEL_TOP - lane * LANE_HEIGHT)
+        self._resize_for(len(lane_ends))
+
+    def _resize_for(self, lanes: int) -> None:
+        """Size the widget and the y range together for this many lanes.
+
+        Both are derived from PX_PER_UNIT, so a lane is always LANE_PIXELS
+        tall on screen. The height is *fixed* rather than capped, because
+        setMaximumHeight alone lets the layout hand back less than asked for
+        -- it gave 68px of a requested 96 -- and the lanes collapse again.
+        """
+        self._lanes = lanes
+        bottom = LABEL_TOP - lanes * LANE_HEIGHT - STRIP_BOTTOM_MARGIN
+        span = STRIP_TOP - bottom
+        axis = self.getPlotItem().getAxis("bottom").height() or AXIS_FALLBACK_PX
+        self.setFixedHeight(round(span * PX_PER_UNIT + axis))
+        self.getPlotItem().setLimits(
+            xMin=-1, xMax=self._bits + 1, yMin=bottom, yMax=STRIP_TOP
+        )
+        self.setYRange(bottom, STRIP_TOP, padding=0)
+        # Confine the selection band to the bits themselves. Left to span the
+        # whole view it runs down over the label lanes and strikes through
+        # whatever name happens to sit under it.
+        span = STRIP_TOP - bottom
+        self.selector.setSpan((0.0 - bottom) / span, (1.0 - bottom) / span)
 
     def _snap(self) -> None:
         """Round the selection to whole bits and announce it."""
@@ -205,6 +286,7 @@ class BitStripView(pg.PlotWidget):
         for item in self._overlays:
             self.removeItem(item)
         self._overlays.clear()
+        self._labels.clear()
 
         row = model.rows[index]
         self._bits = row.bits
@@ -224,24 +306,25 @@ class BitStripView(pg.PlotWidget):
                 "counter": COUNTER_RGBA,
                 "checksum": CHECKSUM_RGBA,
             }.get(kind, NAMED_RGBA)
-            box = QtWidgets.QGraphicsRectItem(start, -0.35, length, 1.7)
+            # The box hugs the strip; labels live underneath it, so a name can
+            # never sit on top of the bits it is describing.
+            box = QtWidgets.QGraphicsRectItem(start, -0.06, length, 1.12)
             box.setBrush(pg.mkBrush(colour[0], colour[1], colour[2], 70))
             box.setPen(pg.mkPen(colour[:3], width=2))
             box.setZValue(5)
             self.addItem(box)
             self._overlays.append(box)
 
-            label = pg.TextItem(kind, color=colour[:3], anchor=(0, 1))
-            label.setPos(start, -0.35)
+            label = pg.TextItem(kind, color=colour[:3], anchor=(0, 0))
             label.setZValue(6)
             self.addItem(label)
             self._overlays.append(label)
+            self._labels.append((label, start))
 
         self.selector.setBounds((0, row.bits))
         self.getPlotItem().getAxis("bottom").setTicks(byte_ticks(row.bits))
-        self.getPlotItem().setLimits(xMin=-1, xMax=row.bits + 1, yMin=-1.2, yMax=2.2)
         self.setXRange(0, row.bits, padding=0.01)
-        self.setYRange(-0.6, 1.6, padding=0)
+        self._lay_out_labels()
 
 
 class DetailPanel(QtWidgets.QWidget):

@@ -9,6 +9,7 @@ own Qt client, and skips entirely when the gui extra is not installed.
 from __future__ import annotations
 
 import os
+from itertools import pairwise
 
 import numpy as np
 import pytest
@@ -125,3 +126,148 @@ class TestBitSelection:
     def test_set_selection_round_trips(self, strip):
         strip.set_selection(3, 5)
         assert strip.selector.getRegion() == (3, 8)
+
+
+class TestLabelLanes:
+    """Field labels must never overlap each other, nor cover the bits."""
+
+    @pytest.fixture
+    def strip(self, qt_app):
+        from canlens.analyze import analyze_frames
+        from canlens.decode import CanFrame
+        from canlens.gui.model import MessageRow, SegmentModel
+        from canlens.gui.palette import kinds_to_indices
+        from canlens.gui.window import BitStripView
+
+        # A 32-byte CAN FD payload: 256 bits across a few hundred pixels is
+        # where labels genuinely collide, and it is what the EV6 looks like.
+        key = (0, 0x210)
+        width = 32
+        payloads = [
+            bytes((i * (k + 1)) & 0xFF for k in range(width)) for i in range(128)
+        ]
+        frames = [CanFrame(i * 10_000_000, *key, p, False) for i, p in enumerate(payloads)]
+        profile = analyze_frames(frames)
+        row = MessageRow(
+            key=key, label="bus 0 0x210", width=width, count=len(payloads),
+            period_ms=10.0, entropy=1.0,
+            kinds=kinds_to_indices(profile[key].bits.kinds),
+        )
+        model = SegmentModel("p", "r", None, profile, [row], payloads={key: payloads})
+        # Deliberately crowded: long names a few bits apart.
+        for name, start, length in (
+            ("VehicleSpeed", 0, 4), ("SteeringAngle", 5, 4),
+            ("BrakePressure", 10, 4), ("GearPosition", 16, 4),
+        ):
+            model.name_selection(0, name, start, length)
+        view = BitStripView()
+        view.resize(900, 90)
+        view.show()
+        view.show_row(model, 0)
+        # Geometry only becomes real once the widget is laid out: setFixedHeight
+        # on an unshown widget changes the request, not height().
+        for _ in range(3):
+            qt_app.processEvents()
+        view.show_row(model, 0)
+        for _ in range(3):
+            qt_app.processEvents()
+        return view
+
+    @staticmethod
+    def lanes(strip) -> dict[int, list[tuple[float, float]]]:
+        """Label extents in bits, grouped by the lane they were placed in."""
+        from canlens.gui.window import LABEL_TOP, LANE_HEIGHT
+
+        (left, right), _ = strip.getPlotItem().vb.viewRange()
+        per_bit = max(strip.getPlotItem().vb.width(), 1) / (right - left)
+        out: dict[int, list[tuple[float, float]]] = {}
+        for item, start in strip._labels:
+            lane = round((LABEL_TOP - item.pos().y()) / LANE_HEIGHT)
+            width = item.boundingRect().width() / per_bit
+            out.setdefault(lane, []).append((start, start + width))
+        return out
+
+    def test_no_two_labels_overlap_within_a_lane(self, strip):
+        for lane, extents in self.lanes(strip).items():
+            extents.sort()
+            for (_, end), (next_start, _) in pairwise(extents):
+                assert next_start >= end, f"overlap in lane {lane}"
+
+    def test_crowded_fields_need_more_than_one_lane(self, strip):
+        # At roughly three pixels per bit a name is twenty-odd bits wide, so
+        # fields five bits apart cannot share a line.
+        assert len(self.lanes(strip)) > 1
+
+    def test_labels_sit_below_the_strip_not_on_it(self, strip):
+        # The bits occupy y 0..1; a label over them hides what it describes.
+        for item, _ in strip._labels:
+            assert item.pos().y() < 0
+
+    def test_every_field_still_gets_a_label(self, strip):
+        names = {item.toPlainText() for item, _ in strip._labels}
+        assert {"VehicleSpeed", "SteeringAngle", "BrakePressure", "GearPosition"} <= names
+
+    def test_zooming_in_frees_lanes(self, strip):
+        before = len(self.lanes(strip))
+        strip.setXRange(0, 24, padding=0)   # far more pixels per bit
+        after = len(self.lanes(strip))
+        assert after < before
+        for lane, extents in self.lanes(strip).items():
+            extents.sort()
+            for (_, end), (next_start, _) in pairwise(extents):
+                assert next_start >= end, f"overlap after zoom in lane {lane}"
+
+    def test_the_height_is_fixed_not_merely_capped(self, strip):
+        # A maximum alone lets the layout hand back less than asked for, and
+        # the lanes squash back on top of each other.
+        assert strip.minimumHeight() == strip.maximumHeight()
+
+    def test_the_height_tracks_the_lane_count(self, qt_app, strip):
+        from canlens.gui.window import LANE_PIXELS
+
+        crowded_lanes, crowded_height = strip._lanes, strip.minimumHeight()
+        strip.setXRange(0, 24, padding=0)   # more pixels per bit, fewer lanes
+        for _ in range(3):
+            qt_app.processEvents()
+        assert strip._lanes < crowded_lanes
+        assert strip.minimumHeight() < crowded_height
+        assert crowded_height - strip.minimumHeight() == pytest.approx(
+            (crowded_lanes - strip._lanes) * LANE_PIXELS, abs=2
+        )
+
+    def test_a_lane_is_always_the_same_number_of_pixels(self, strip):
+        from canlens.gui.window import LANE_HEIGHT, LANE_PIXELS
+
+        view = strip.getPlotItem().vb
+        bottom, top = view.viewRange()[1]
+        per_unit = max(view.height(), 1) / (top - bottom)
+        assert LANE_HEIGHT * per_unit == pytest.approx(LANE_PIXELS, rel=0.15)
+
+    def test_a_message_without_fields_uses_a_single_lane(self, qt_app, strip):
+        from canlens.analyze import analyze_frames
+        from canlens.decode import CanFrame
+        from canlens.gui.model import MessageRow, SegmentModel
+        from canlens.gui.palette import kinds_to_indices
+        from canlens.gui.window import BitStripView
+
+        key = (0, 0x111)
+        payloads = [b"\x00\x00"] * 16
+        frames = [CanFrame(i * 10_000_000, *key, p, False) for i, p in enumerate(payloads)]
+        profile = analyze_frames(frames)
+        row = MessageRow(
+            key=key, label="x", width=2, count=16, period_ms=10.0, entropy=0.0,
+            kinds=kinds_to_indices(profile[key].bits.kinds),
+        )
+        view = BitStripView()
+        view.show_row(SegmentModel("p", "r", None, profile, [row], payloads={key: payloads}), 0)
+        assert view._labels == []
+        assert view._lanes == 1
+        assert view.minimumHeight() < strip.minimumHeight()
+
+    def test_the_selection_band_does_not_cover_the_labels(self, strip):
+        # The band must stop at the bits; spanning the whole view strikes
+        # through whichever name sits beneath it.
+        low, high = strip.selector.span
+        bottom, top = strip.getPlotItem().vb.viewRange()[1]
+        assert bottom + low * (top - bottom) == pytest.approx(0.0, abs=0.05)
+        assert bottom + high * (top - bottom) == pytest.approx(1.0, abs=0.05)
