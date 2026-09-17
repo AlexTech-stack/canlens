@@ -15,6 +15,7 @@ from ..analyze import TraceProfile, analyze_frames
 from ..analyze.bits import BitOrder, bit_matrix
 from ..decode import iter_frames
 from ..export import MessageEntry, SignalEntry
+from ..filters import TraceFilter
 from ..infer import MessageInference, infer_frames
 from ..infer.counters import field_values, score_counter
 from .palette import kinds_to_indices
@@ -100,7 +101,15 @@ class SegmentModel:
     # Payloads are kept so a bit selection can be replotted without going back
     # to the file. Decoding a segment takes seconds; a drag must not.
     payloads: dict[tuple[int, int], list[bytes]] = field(default_factory=dict)
+    # `rows` is what is on screen; `all_rows` is everything the segment holds.
+    # Filtering swaps the former and leaves the latter alone, so clearing a
+    # filter never needs the trace decoded again.
+    all_rows: list[MessageRow] = field(default_factory=list)
     _matrix_cache: tuple[int, np.ndarray] | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.all_rows:
+            self.all_rows = list(self.rows)
 
     @property
     def bit_width(self) -> int:
@@ -132,6 +141,14 @@ class SegmentModel:
             elif current.extended and not previous.extended:
                 marks.append((i, "extended"))
         return marks
+
+    def apply_filter(self, trace_filter: TraceFilter) -> int:
+        """Show only the messages this filter selects. Returns how many remain."""
+        self.rows = [
+            row for row in self.all_rows if trace_filter.matches_message(row.bus, row.address)
+        ]
+        self._matrix_cache = None
+        return len(self.rows)
 
     def matrix_for(self, index: int) -> np.ndarray:
         """Bit matrix for one message, cached for the row being looked at."""

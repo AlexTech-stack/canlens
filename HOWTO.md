@@ -482,6 +482,37 @@ The magnified strip exists because of a scale problem worth knowing about. At
 overlay drawn there is invisible however correct its coordinates are. The
 matrix is the map; the strip is the detail.
 
+### Filtering what is shown
+
+The toolbar takes a four-field filter:
+
+```
+vehicle , segment , bus , can id
+```
+
+```
+TOYOTA_PRIUS,*,CAN0,*      every segment and identifier of that car, on bus 0
+*,*,*,0x1*                 identifiers beginning 0x1, on any vehicle or bus
+KIA_EV6,*,*,0x2??          three-digit identifiers 0x200-0x2FF
+*,*,CAN2,0x18DA*           UDS diagnostics on bus 2
+TOYOTA_PRIUS               a vehicle; trailing fields default to *
+```
+
+Two wildcards, and only two. **`*`** matches any run of characters including
+none, so `0x1*` selects 0x1, 0x11, 0x112, 0x123, 0x124 and so on but not
+0x211. **`?`** matches exactly one, so `0x2??` is 0x200–0x2FF and nothing
+shorter or longer. Everything else is literal — including `[`, which a glob
+library would quietly read as a character class.
+
+Vehicle and segment narrow the list on the left; bus and identifier narrow the
+rows in the matrix, and the status bar says how many were hidden. `Clear`
+restores everything without re-reading the trace.
+
+Matching is case-insensitive, and each field accepts the ways a value is
+naturally written: `CAN0`, `CAN_0`, `bus 0` and `0` all mean bus 0, and both
+`0x211` and `211` name that identifier. Identifiers carry no leading zeroes,
+which is what makes `0x1*` work as a prefix.
+
 ### Selecting a field by hand
 
 Drag on the magnified strip to select any range of bits. The line beneath

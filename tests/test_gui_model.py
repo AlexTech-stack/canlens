@@ -391,3 +391,75 @@ class TestExportBridge:
         entry = m.export_messages()[0]
         assert entry.address == 0x100 and entry.length == 2 and entry.bus == 0
         assert entry.extended is False
+
+
+class TestModelFiltering:
+    @staticmethod
+    def model(keys):
+        from canlens.analyze import analyze_frames
+        from canlens.decode import CanFrame
+        from canlens.gui.palette import kinds_to_indices
+
+        frames = [
+            CanFrame(i * 10_000_000, bus, addr, bytes([i & 0xFF, 0]), False)
+            for bus, addr in keys
+            for i in range(8)
+        ]
+        profile = analyze_frames(frames)
+        rows = [
+            MessageRow(
+                key=k, label=f"bus {k[0]} 0x{k[1]:03X}", width=2, count=8,
+                period_ms=10.0, entropy=1.0,
+                kinds=kinds_to_indices(profile[k].bits.kinds),
+            )
+            for k in keys
+        ]
+        rows.sort(key=lambda r: r.sort_key)
+        return SegmentModel("p", "r", None, profile, rows)
+
+    def test_filtering_by_bus(self):
+        from canlens.filters import TraceFilter
+
+        m = self.model([(0, 0x100), (1, 0x100), (2, 0x100)])
+        assert m.apply_filter(TraceFilter.parse("*,*,CAN1,*")) == 1
+        assert [r.bus for r in m.rows] == [1]
+
+    def test_filtering_by_identifier_prefix(self):
+        from canlens.filters import TraceFilter
+
+        m = self.model([(0, 0x1), (0, 0x11), (0, 0x123), (0, 0x211)])
+        m.apply_filter(TraceFilter.parse("*,*,*,0x1*"))
+        assert [r.address for r in m.rows] == [0x1, 0x11, 0x123]
+
+    def test_clearing_a_filter_restores_every_message(self):
+        from canlens.filters import TraceFilter
+
+        m = self.model([(0, 0x100), (1, 0x200)])
+        m.apply_filter(TraceFilter.parse("*,*,CAN0,*"))
+        assert m.apply_filter(TraceFilter()) == 2
+
+    def test_all_rows_is_never_narrowed(self):
+        # Clearing a filter must not need the trace decoded again.
+        from canlens.filters import TraceFilter
+
+        m = self.model([(0, 0x100), (1, 0x200)])
+        m.apply_filter(TraceFilter.parse("*,*,CAN0,*"))
+        assert len(m.all_rows) == 2
+
+    def test_a_filter_matching_nothing_leaves_no_rows(self):
+        from canlens.filters import TraceFilter
+
+        m = self.model([(0, 0x100)])
+        assert m.apply_filter(TraceFilter.parse("*,*,CAN7,*")) == 0
+        assert m.matrix().shape[0] == 0
+
+    def test_filtering_invalidates_the_matrix_cache(self):
+        from canlens.filters import TraceFilter
+
+        m = self.model([(0, 0x100), (0, 0x200)])
+        m.payloads = {k: [bytes([i, 0]) for i in range(8)] for k in (r.key for r in m.all_rows)}
+        first = m.matrix_for(0).copy()
+        m.apply_filter(TraceFilter.parse("*,*,*,0x200"))
+        # Row 0 is now a different message; a stale cache would return the old one.
+        assert m.rows[0].address == 0x200
+        assert m.matrix_for(0).shape == first.shape

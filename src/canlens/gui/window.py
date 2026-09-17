@@ -18,6 +18,7 @@ from PySide6 import QtCore, QtWidgets
 
 from ..corpus import Manifest, segment_dest
 from ..export import save_pdu_db
+from ..filters import TraceFilter
 from .axes import bus_ticks, byte_ticks
 from .model import SegmentModel, load_segment
 from .palette import BACKGROUND, CHECKSUM_RGBA, COUNTER_RGBA, NAMED_RGBA, lookup_table
@@ -486,6 +487,15 @@ class Workbench(QtWidgets.QMainWindow):
         self.setCentralWidget(split)
 
         bar = self.addToolBar("actions")
+        bar.addWidget(QtWidgets.QLabel("  filter  "))
+        self.filter_field = QtWidgets.QLineEdit()
+        self.filter_field.setPlaceholderText("vehicle,segment,bus,can id   e.g. TOYOTA_PRIUS,*,CAN0,0x2*")
+        self.filter_field.setMinimumWidth(420)
+        self.filter_field.returnPressed.connect(self._apply_filter)
+        bar.addWidget(self.filter_field)
+        clear = bar.addAction("Clear")
+        clear.triggered.connect(self._clear_filter)
+        bar.addSeparator()
         export = bar.addAction("Export PDU database…")
         export.triggered.connect(self._export)
 
@@ -493,6 +503,8 @@ class Workbench(QtWidgets.QMainWindow):
 
         self._model: SegmentModel | None = None
         self._paths: list[tuple[str, str]] = []
+        self._all_paths: list[tuple[str, str]] = []
+        self._filter = TraceFilter()
         self._populate()
 
     def _populate(self) -> None:
@@ -501,12 +513,33 @@ class Workbench(QtWidgets.QMainWindow):
             for segment in entry.segments:
                 path = segment_dest(self.root, segment)
                 if os.path.exists(path):
-                    self._paths.append((entry.key, path))
+                    self._all_paths.append((entry.key, path))
+        self._list_segments()
+
+    def _list_segments(self, keep: str | None = None) -> None:
+        """Rebuild the segment list under the current filter.
+
+        Reselects the segment that was open when it survives the filter, so
+        narrowing to a bus does not throw away what you were looking at.
+        """
+        self._paths = [
+            (name, path)
+            for name, path in self._all_paths
+            if self._filter.matches_segment(name, path)
+        ]
+        self.segments.blockSignals(True)
+        self.segments.clear()
         for name, path in self._paths:
             _device, route, index = path.split("/")[-4:-1]
             self.segments.addItem(f"{name}   {route.split('--')[0]}/{index}")
-        if self._paths:
-            self.segments.setCurrentRow(0)
+        self.segments.blockSignals(False)
+        if not self._paths:
+            self.statusBar().showMessage(f"no segments match {self._filter}")
+            return
+        wanted = next((i for i, (_, p) in enumerate(self._paths) if p == keep), 0)
+        self.segments.setCurrentRow(wanted)
+        if wanted == self.segments.currentRow():
+            self._open_selected(wanted)
 
     def _open_selected(self, index: int) -> None:
         if not (0 <= index < len(self._paths)):
@@ -515,12 +548,33 @@ class Workbench(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"loading {platform} …")
         QtWidgets.QApplication.processEvents()
         model = load_segment(path, root=self.root, platform=platform)
+        kept = model.apply_filter(self._filter)
         self._model = model
+        if not kept:
+            self.statusBar().showMessage(
+                f"{platform}  —  no messages match {self._filter}"
+            )
+            return
         self.matrix.set_model(model)
+        hidden = len(model.all_rows) - kept
+        suffix = f", {hidden} hidden by filter" if hidden else ""
         self.statusBar().showMessage(
-            f"{platform}  —  {len(model.rows)} messages, {model.profile.frames} frames, "
-            f"{model.bit_width} bits wide"
+            f"{platform}  —  {kept} messages, {model.profile.frames} frames, "
+            f"{model.bit_width} bits wide{suffix}"
         )
+
+    def _apply_filter(self) -> None:
+        try:
+            self._filter = TraceFilter.parse(self.filter_field.text())
+        except ValueError as exc:
+            self.statusBar().showMessage(f"filter: {exc}")
+            return
+        keep = self._model.path if self._model is not None else None
+        self._list_segments(keep=keep)
+
+    def _clear_filter(self) -> None:
+        self.filter_field.clear()
+        self._apply_filter()
 
     def _export(self) -> None:
         """Write everything found -- named and inferred -- as a PDU database."""
