@@ -317,20 +317,23 @@ def find_crc16(
     matrix: np.ndarray | None = None,
 ) -> list[Crc16Hypothesis]:
     """Look for a 2-byte CRC field, with or without an E2E Profile 5 Data ID."""
-    if len(payloads) < 2:
-        return []
     from .checksums import as_matrix
 
     blob = as_matrix(payloads) if matrix is None else matrix
+    if blob.shape[0] < 2:
+        return []
     width = blob.shape[1]
     starts = (
         [s for s in candidate_bytes if 0 <= s < width - 1]
         if candidate_bytes is not None
         else range(width - 1)
     )
+    # `payloads` may be just a sample when the matrix is supplied: the solver
+    # reads four of them and the screen sixty-four, and building three hundred
+    # thousand bytes objects to serve that was measured at 0.11s per segment.
     screen = list(payloads[:screen_frames])
     sample = blob[:screen_frames]
-    frames = len(payloads)
+    frames = blob.shape[0]
     found: list[Crc16Hypothesis] = []
 
     for start in starts:

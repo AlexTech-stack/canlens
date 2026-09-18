@@ -32,21 +32,25 @@ from .message import (
     infer_message_columnar,
     infer_segment,
 )
+from .results import INFER_VERSION, clear_results, infer_cached, warm_segment
 
 __all__ = [
     "ALGORITHMS",
     "CRC16_ALGORITHMS",
+    "INFER_VERSION",
     "ChecksumHypothesis",
     "CounterHypothesis",
     "Crc16Hypothesis",
     "MessageInference",
     "checksum_candidate_bytes",
+    "clear_results",
     "crc16_autosar",
     "e2e_p05",
     "field_values",
     "find_checksums",
     "find_counters",
     "find_crc16",
+    "infer_cached",
     "infer_frames",
     "infer_frameset",
     "infer_message",
@@ -55,4 +59,5 @@ __all__ = [
     "score_algorithm",
     "score_counter",
     "solve_data_id",
+    "warm_segment",
 ]

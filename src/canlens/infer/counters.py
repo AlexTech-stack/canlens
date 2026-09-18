@@ -75,7 +75,7 @@ def find_counters(
     max_length: int = 8,
     min_match: float = 0.95,
     min_coverage: float = 0.5,
-    min_lsb_rate: float = 0.40,
+    min_lsb_rate: float | None = None,
 ) -> list[CounterHypothesis]:
     """Scan every field position for one that advances by a constant step.
 
@@ -95,27 +95,33 @@ def find_counters(
     a perfectly good four-bit counter, so a candidate contained within an
     already-accepted longer one is dropped rather than reported twice.
 
-    Start positions are prefiltered on the least significant bit. Because the
-    step must be coprime with a power-of-two width it is necessarily odd, so
-    the field's lowest bit changes on *every* increment: a counter cannot begin
-    at a bit that is not itself noisy. On a 32-byte CAN FD payload that removes
-    most of the 250-odd candidate offsets before any arithmetic happens.
+    Start positions are prefiltered on the least significant bit, and the
+    bound is exact rather than loose. The step must be coprime with a
+    power-of-two width, so it is odd, so the field's lowest bit flips on
+    *every* increment -- and a counter accepted at `min_match` must therefore
+    have an LSB transition rate of at least `min_match`. The default follows
+    that: `min_lsb_rate` is `min_match` unless overridden. An earlier cutoff
+    of 0.40 was merely "noisy", admitted 2729 starts on a CAN FD segment where
+    0.95 admits 193, and found exactly the same 163 counters four times slower.
     """
     frames, bits = matrix.shape
     if frames < 2:
         return []
 
+    if min_lsb_rate is None:
+        min_lsb_rate = min_match
     lsb_rates = (np.diff(matrix.astype(np.int8), axis=0) != 0).mean(axis=0)
-    eligible = lsb_rates >= min_lsb_rate
+    positions = np.flatnonzero(lsb_rates >= min_lsb_rate)
 
     # Converted once: field_values used to cast its slice on every call.
     wide = matrix.astype(np.int64)
 
-    # Batching every start position of a given length into one sliding-window
-    # matmul was tried and is slower: measured 3.18s against 2.65s, because on
-    # a 32-byte payload only a few dozen of 250-odd offsets are eligible and
-    # computing them all costs more than the per-position calls it saves.
-    positions = np.flatnonzero(eligible)
+    # Batching the surviving positions of one length into a single
+    # sliding-window matmul was tried and measured slower (3.18s against
+    # 2.65s) even with the prefilter applied first. The cause was not pinned
+    # down; with the exact LSB bound above leaving under two hundred positions
+    # per segment, the per-position loop is cheap enough that it no longer
+    # matters.
 
     found: list[CounterHypothesis] = []
     for length in range(max_length, min_length - 1, -1):

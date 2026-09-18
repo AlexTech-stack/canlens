@@ -62,6 +62,49 @@ class FetchWorker(QtCore.QThread):
         self.completed.emit(result)
 
 
+class CacheWorker(QtCore.QThread):
+    """Warms both caches for a list of segments on a process pool.
+
+    A QThread only hosts the pool and relays progress; the decoding and
+    inference happen in worker processes, one segment each, so the window
+    stays responsive and all physical cores are used.
+    """
+
+    progressed = QtCore.Signal(int, int)
+    completed = QtCore.Signal(int, int)
+
+    def __init__(self, paths: list[str], root: str, jobs: int) -> None:
+        super().__init__()
+        self._paths = paths
+        self._root = root
+        self._jobs = jobs
+        self._stop = False
+
+    def stop(self) -> None:
+        self._stop = True
+
+    def run(self) -> None:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        from ..infer import warm_segment
+
+        done = failed = 0
+        with ProcessPoolExecutor(max_workers=self._jobs) as pool:
+            futures = [pool.submit(warm_segment, path, self._root) for path in self._paths]
+            for future in as_completed(futures):
+                done += 1
+                try:
+                    future.result()
+                except Exception:  # noqa: BLE001 - one bad file must not stop the rest
+                    failed += 1
+                self.progressed.emit(done, len(self._paths))
+                if self._stop:
+                    for pending in futures:
+                        pending.cancel()
+                    break
+        self.completed.emit(done - failed, failed)
+
+
 class DataScreen(QtWidgets.QWidget):
     """Browse the corpus, fetch what is wanted, delete what is not."""
 
@@ -74,6 +117,7 @@ class DataScreen(QtWidgets.QWidget):
         self.manifest = manifest
         self._local: dict[str, LocalPlatform] = {}
         self._worker: FetchWorker | None = None
+        self._cache_worker: CacheWorker | None = None
 
         layout = QtWidgets.QVBoxLayout(self)
 
@@ -103,6 +147,13 @@ class DataScreen(QtWidgets.QWidget):
         self.delete_button = QtWidgets.QPushButton("Delete local")
         self.delete_button.clicked.connect(self._delete)
         controls.addWidget(self.delete_button)
+        self.cache_button = QtWidgets.QPushButton("Build cache")
+        self.cache_button.setToolTip(
+            "decode and infer the selected platforms' local segments once, "
+            "so opening them later is instant"
+        )
+        self.cache_button.clicked.connect(self._build_cache)
+        controls.addWidget(self.cache_button)
         refresh = QtWidgets.QPushButton("Refresh")
         refresh.clicked.connect(self.reload)
         controls.addWidget(refresh)
@@ -264,6 +315,45 @@ class DataScreen(QtWidgets.QWidget):
         if self._worker is not None:
             self._worker.stop()
             self.status.setText("cancelling — letting transfers in flight finish")
+        if self._cache_worker is not None:
+            self._cache_worker.stop()
+            self.status.setText("cancelling — letting segments in progress finish")
+
+    # ----- caching ----------------------------------------------------------
+
+    def _build_cache(self) -> None:
+        paths: list[str] = []
+        for key in self.selected_platforms():
+            held = self._local.get(key)
+            if held:
+                paths += held.paths
+        if not paths:
+            self.status.setText("select platforms with local segments first")
+            return
+        from ..cli import default_jobs
+
+        jobs = default_jobs()
+        self.status.setText(f"caching {len(paths)} segments on {jobs} workers")
+        self.progress.setRange(0, len(paths))
+        self.progress.setValue(0)
+        self.progress.setVisible(True)
+        self._set_busy(True)
+        self._cache_worker = CacheWorker(paths, self.root, jobs)
+        self._cache_worker.progressed.connect(self._on_cache_progress)
+        self._cache_worker.completed.connect(self._on_cache_complete)
+        self._cache_worker.start()
+
+    def _on_cache_progress(self, done: int, total: int) -> None:
+        self.progress.setValue(done)
+        self.status.setText(f"cached {done}/{total} segments")
+
+    def _on_cache_complete(self, ok: int, failed: int) -> None:
+        self._set_busy(False)
+        self.progress.setVisible(False)
+        self._cache_worker = None
+        self.status.setText(
+            f"cached {ok} segments" + (f", {failed} failed" if failed else "")
+        )
 
     def _on_progress(self, done: int, total: int, gib: float) -> None:
         self.progress.setValue(done)
@@ -284,6 +374,7 @@ class DataScreen(QtWidgets.QWidget):
     def _set_busy(self, busy: bool) -> None:
         self.fetch_button.setEnabled(not busy)
         self.delete_button.setEnabled(not busy)
+        self.cache_button.setEnabled(not busy)
         self.cancel_button.setEnabled(busy)
 
     # ----- deleting ---------------------------------------------------------

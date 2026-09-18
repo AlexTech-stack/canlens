@@ -16,7 +16,7 @@ from ..analyze.bits import BitOrder, bit_matrix
 from ..decode import load_frames
 from ..export import MessageEntry, SignalEntry
 from ..filters import TraceFilter
-from ..infer import MessageInference, infer_frameset
+from ..infer import MessageInference, infer_cached
 from ..infer.counters import field_values, score_counter
 from .palette import kinds_to_indices
 
@@ -330,7 +330,13 @@ def load_segment(
     # the trace back into four hundred thousand CanFrame objects on the way in.
     frames = load_frames(path, root=root)
     profile = analyze_frameset(frames)
-    inferences = {m.key: m for m in infer_frameset(frames)} if infer else {}
+    # The results cache is what makes re-opening a segment instant; on a miss
+    # the profile just computed is handed in so nothing is measured twice.
+    inferences = (
+        {m.key: m for m in infer_cached(path, root=root, frames=frames, profile=profile)}
+        if infer
+        else {}
+    )
     payloads = {message.key: message.payloads() for message in frames.group()}
 
     rows = [

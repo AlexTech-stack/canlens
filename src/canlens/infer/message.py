@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ..analyze import TraceProfile
 from ..analyze.bits import (
     BitOrder,
     BitProfile,
@@ -23,6 +24,12 @@ from ..decode.frameset import FrameSet, Message
 from .checksums import ChecksumHypothesis, find_checksums
 from .counters import CounterHypothesis, find_counters
 from .crc16 import Crc16Hypothesis, find_crc16
+
+# How many payloads to materialise as bytes for the detectors that still read
+# them (the Data-ID solver reads 4, the CRC screen 64). Everything that scores
+# frames does so against the byte matrix, so the rest would be built and
+# thrown away -- 318,510 objects per segment, measured.
+PAYLOAD_SAMPLE = 64
 
 # A checksum byte is indistinguishable from noise by construction, so only
 # bytes that move like noise are worth testing. This screen is what keeps a
@@ -113,7 +120,7 @@ def _build(
         bus=bus,
         address=address,
         width=width,
-        frames=len(payloads),
+        frames=matrix.shape[0],
         bits=bits,
         counters=find_counters(matrix, **kwargs.get("counter_options", {})),
         checksums=find_checksums(
@@ -134,13 +141,23 @@ def _build(
 
 
 def infer_message_columnar(
-    message: Message, *, order: BitOrder = BitOrder.INTEL, **kwargs
+    message: Message,
+    *,
+    order: BitOrder = BitOrder.INTEL,
+    bits: BitProfile | None = None,
+    **kwargs,
 ) -> MessageInference:
-    """Infer one message straight from its columns."""
+    """Infer one message straight from its columns.
+
+    `bits` lets a caller that has already measured the message -- the analyze
+    pass does, over exactly the same frames -- hand the profile in rather than
+    have it computed a second time.
+    """
     byte_matrix = message.bytes_matrix()
-    bits = profile_bits_from_bytes(byte_matrix, order)
+    if bits is None or bits.width != message.width or bits.frames != byte_matrix.shape[0]:
+        bits = profile_bits_from_bytes(byte_matrix, order)
     matrix = bit_matrix_from_bytes(byte_matrix, order)
-    payloads = message.payloads()
+    payloads = message.frames.payloads(message.index[:PAYLOAD_SAMPLE])
     return _build(
         message.bus, message.address, message.width, payloads, bits, matrix,
         byte_matrix=byte_matrix, **kwargs,
@@ -148,11 +165,25 @@ def infer_message_columnar(
 
 
 def infer_frameset(
-    frames: FrameSet, *, order: BitOrder = BitOrder.INTEL, min_frames: int = 32
+    frames: FrameSet,
+    *,
+    order: BitOrder = BitOrder.INTEL,
+    min_frames: int = 32,
+    profile: TraceProfile | None = None,
 ) -> list[MessageInference]:
-    """Infer every message of a columnar trace. The fast path."""
+    """Infer every message of a columnar trace. The fast path.
+
+    Pass the `TraceProfile` from `analyze_frameset` over the same frames and
+    each message's bit profile is reused instead of measured again.
+    """
     return [
-        infer_message_columnar(message, order=order)
+        infer_message_columnar(
+            message,
+            order=order,
+            bits=profile[message.key].bits
+            if profile is not None and message.key in profile.messages
+            else None,
+        )
         for message in frames.group(min_frames=min_frames)
     ]
 

@@ -231,9 +231,12 @@ def find_checksums(
     `screen_frames` frames rejects almost everything before the full trace is
     scored, which is what keeps a whole-segment sweep affordable.
     """
-    if not payloads:
-        return []
     blob = as_matrix(payloads) if matrix is None else matrix
+    if blob.shape[0] == 0:
+        return []
+    # When the matrix is supplied, `payloads` may be only a sample of it; the
+    # matrix is what is scored, so the matrix says how many frames there were.
+    frames = blob.shape[0]
     width = blob.shape[1]
     positions = candidate_bytes if candidate_bytes is not None else range(width)
     # The screen is now only worth having for very long traces: scoring every
@@ -259,7 +262,7 @@ def find_checksums(
         # every position that verified is carried along rather than hidden.
         index, rate = matches[-1]
         found.append(
-            ChecksumHypothesis(index, name, rate, len(payloads),
+            ChecksumHypothesis(index, name, rate, frames,
                                ambiguous_positions=indices if len(indices) > 1 else ())
         )
     return sorted(found, key=lambda f: f.byte_index)

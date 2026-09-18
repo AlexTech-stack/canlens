@@ -342,11 +342,47 @@ measured 3.18 s against 2.65 s — on a 32-byte payload only a few dozen of the
 than the per-position calls it saves. The comment in `find_counters` records
 the numbers so nobody tries it twice.
 
-**Where the remaining time is.** `infer` is still 2.7 s of the 3.2 s, in the
-counter scan rather than in the CRC work. Parallelism is the untouched lever:
-the pipeline is embarrassingly parallel across segments, and 12 processes
-measured 4.0× earlier — that is the next thing worth doing, and still not a
-reason to leave Python.
+### The second pass: an exact bound, a results cache, and parallelism
+
+A reevaluation of the above found the biggest remaining win was algorithmic,
+not numeric. A counter's stride must be coprime with a power-of-two width, so
+it is odd, so the field's LSB flips on *every* increment — which means a
+counter accepted at 95% match **must** have an LSB transition rate of at
+least 95%. The prefilter had been set at a merely "noisy" 0.40:
+
+```
+min_lsb_rate=0.40   eligible starts= 2729   counters=163   1.64s
+min_lsb_rate=0.95   eligible starts=  193   counters=163   0.43s
+```
+
+Same findings, 3.8× faster, one line. It now defaults to `min_match`.
+
+Inference results are cached too — the decode cache was built first only
+because decode was profiled first. Inference is deterministic in its frames,
+so its result is stored (gzipped, ~200 KB) beside the frame cache and keyed on
+the same source identity plus `INFER_VERSION`, which **must be bumped when a
+detector or threshold changes**: a stale result here is not slower, it is
+wrong. `analyze` and `infer` also share bit profiles rather than measuring
+each message twice, and only a 64-frame sample of payloads is materialised as
+`bytes`, since every detector scores the byte matrix.
+
+`canlens cache build` now fills both caches over a process pool, defaulting
+to **physical** cores — the machine's 12 logical CPUs are 6 cores with
+hyperthreading, and the second thread of a core adds nothing to numpy-bound
+work. The Data screen has the same as a **Build cache** button.
+
+Measured on the local corpus:
+
+```
+                                  per segment
+original pipeline                    4.08s
+first pass, parallel build           0.68s wall   (32 segments in 21.6s, 6 workers)
+every pass after that                0.40s        (10x)
+workbench opening a warm segment     0.64s        (was 5.47s)
+```
+
+Still no reason to leave Python. If the counter scan ever matters again,
+`numba` on that one loop is the middle step.
 
 ## 6. Infer
 
