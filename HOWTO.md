@@ -285,7 +285,46 @@ absolute millisecond threshold.
 
 ---
 
-## 5. Infer
+## 5. The decode cache
+
+Decoding a segment costs ~1.5 s, and profiling showed almost all of it is
+~1.2 million field reads across the pycapnp boundary at ~0.6 µs each. That is
+not something Python can be made to do faster — so it is done once.
+
+```bash
+canlens cache build              # every local segment
+canlens cache build KIA_EV6      # or just one platform
+canlens cache status
+canlens cache clear
+```
+
+Measured over a whole local corpus:
+
+```
+analyze 31 segments
+  without cache    64.4s
+  with cache       11.9s   -> 5.4x
+```
+
+The cache is **smaller than what it was decoded from** — 83 MB against 104 MB
+of `.zst` — because columns compress far better than interleaved capnp. It
+lives under `<root>/cache/`, mirroring the segment layout, and is rebuilt
+automatically when a segment's size or mtime changes, when the cache format
+version moves, or when an entry is unreadable for any reason at all.
+
+Everything downstream now runs columnar. `FrameSet` holds a trace as arrays
+plus one flat payload blob, and a message's payloads are gathered into a byte
+matrix by index arithmetic rather than by slicing out thousands of `bytes`.
+That part matters: rebuilding 400,000 `CanFrame` objects from the cache costs
+0.7 s on its own, which would have capped a 12× cache at about 2×.
+
+**What this does not fix.** The pipeline is now inference-bound. End to end a
+segment went from 4.9 s to 3.6 s, because `infer` is 3.1 s of it and is
+untouched by caching. Its hot spot is `crc16_update`, a pure-Python byte loop
+called 586,000 times; doing the table lookup column-wise over all frames at
+once gives identical results about 8× faster, and is the obvious next step.
+
+## 6. Infer
 
 `analyze` measures. `infer` makes claims — and only ones it has **checked**
 against the trace.
@@ -412,7 +451,7 @@ across 69 messages of one segment is suggestive, but holding across thousands
 of segments from hundreds of different drivers is proof — and that is
 `corroborate`'s job, not `infer`'s.
 
-## 6. From Python
+## 7. From Python
 
 ```python
 from canlens.corpus import Manifest

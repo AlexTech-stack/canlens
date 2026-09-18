@@ -22,7 +22,9 @@ from .message import (
     MessageInference,
     checksum_candidate_bytes,
     infer_frames,
+    infer_frameset,
     infer_message,
+    infer_message_columnar,
     infer_segment,
 )
 
@@ -41,7 +43,9 @@ __all__ = [
     "find_counters",
     "find_crc16",
     "infer_frames",
+    "infer_frameset",
     "infer_message",
+    "infer_message_columnar",
     "infer_segment",
     "score_algorithm",
     "score_counter",

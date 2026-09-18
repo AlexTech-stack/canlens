@@ -297,6 +297,58 @@ def cmd_export_pdu_db(args) -> int:
     return 0
 
 
+def cmd_cache_build(args) -> int:
+    """Decode every local segment once so later passes are cache hits."""
+    import time
+
+    from .corpus import inventory
+    from .decode import load_frames
+
+    manifest = _manifest(args.root)
+    held = inventory(args.root, manifest)
+    names = args.platform or sorted(k for k in held if k)
+    paths = [p for name in names for p in (held[name].paths if name in held else [])]
+    if not paths:
+        print("canlens: nothing local to cache", file=sys.stderr)
+        return 1
+
+    started = time.time()
+    for done, path in enumerate(paths, start=1):
+        load_frames(path, root=args.root)
+        if done % 10 == 0 or done == len(paths):
+            rate = done / max(time.time() - started, 1e-9)
+            print(f"  {done}/{len(paths)} segments  ({rate:.1f}/s)", flush=True)
+    print(f"cached {len(paths)} segments in {time.time() - started:.1f}s")
+    return 0
+
+
+def cmd_cache_clear(args) -> int:
+    from .decode import clear
+
+    print(f"removed {clear(args.root)} cache entries")
+    return 0
+
+
+def cmd_cache_status(args) -> int:
+    from .corpus import inventory
+    from .decode import cache_path
+    from .decode.cache import CACHE_DIR
+
+    manifest = _manifest(args.root)
+    held = inventory(args.root, manifest)
+    total = cached = size = 0
+    for entry in held.values():
+        for path in entry.paths:
+            total += 1
+            destination = cache_path(args.root, path)
+            if os.path.exists(destination):
+                cached += 1
+                size += os.path.getsize(destination)
+    where = os.path.join(args.root, CACHE_DIR)
+    print(f"{cached}/{total} local segments cached, {size / 2**30:.2f} GiB in {where}")
+    return 0
+
+
 def cmd_gui(args) -> int:
     try:
         from .gui.window import run
@@ -454,6 +506,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path", help="path to rlog.zst")
     p.add_argument("-o", "--output", required=True, help="destination .json")
     p.set_defaults(func=cmd_export_pdu_db)
+
+    cache = sub.add_parser("cache", help="decode segments once and keep the columns")
+    cops = cache.add_subparsers(dest="op", required=True)
+    p = cops.add_parser("build", help="decode and cache local segments")
+    p.add_argument("platform", nargs="*", help="platform key(s); default every local one")
+    p.set_defaults(func=cmd_cache_build)
+    p = cops.add_parser("clear", help="delete every cache entry")
+    p.set_defaults(func=cmd_cache_clear)
+    p = cops.add_parser("status", help="how much of what is local is cached")
+    p.set_defaults(func=cmd_cache_status)
 
     p = sub.add_parser("gui", help="open the desktop workbench")
     p.set_defaults(func=cmd_gui, op=None)

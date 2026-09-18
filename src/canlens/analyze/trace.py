@@ -8,8 +8,9 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from ..decode import CanFrame, iter_frames
-from .bits import BitOrder, BitProfile, profile_bits
+from ..decode import CanFrame, iter_frames, load_frames
+from ..decode.frameset import FrameSet
+from .bits import BitOrder, BitProfile, profile_bits, profile_bits_from_bytes
 from .timing import TimingProfile, profile_timing
 
 
@@ -69,10 +70,35 @@ class TraceProfile:
         return sum(m.bits.payload_entropy for m in self.messages.values())
 
 
+def analyze_frameset(frames: FrameSet, order: BitOrder = BitOrder.INTEL) -> TraceProfile:
+    """Measure every message of a columnar trace.
+
+    The fast path. Payloads are gathered as byte matrices straight out of the
+    frame blob, so nothing is ever turned back into a CanFrame.
+    """
+    messages = {}
+    for message in frames.group():
+        messages[message.key] = MessageProfile(
+            bus=message.bus,
+            address=message.address,
+            count=message.count,
+            lengths=dict(sorted(message.lengths.items())),
+            width=message.width,
+            analysed=int(message.index.size),
+            bits=profile_bits_from_bytes(message.bytes_matrix(), order),
+            timing=profile_timing(message.stamps.tolist()),
+        )
+    stamps = frames.mono_ns
+    duration = float(stamps[-1] - stamps[0]) / 1e9 if stamps.size >= 2 else 0.0
+    return TraceProfile(messages=messages, frames=len(frames), duration_s=duration)
+
+
 def analyze_frames(
-    frames: Iterable[CanFrame], order: BitOrder = BitOrder.INTEL
+    frames: Iterable[CanFrame] | FrameSet, order: BitOrder = BitOrder.INTEL
 ) -> TraceProfile:
     """Measure every message in a stream of frames."""
+    if isinstance(frames, FrameSet):
+        return analyze_frameset(frames, order)
     payloads: dict[tuple[int, int], list[bytes]] = defaultdict(list)
     stamps: dict[tuple[int, int], list[int]] = defaultdict(list)
     lengths: dict[tuple[int, int], Counter[int]] = defaultdict(Counter)
@@ -112,7 +138,9 @@ def analyze_frames(
 
 
 def analyze_segment(
-    path: str, *, root: str, order: BitOrder = BitOrder.INTEL, **kwargs
+    path: str, *, root: str, order: BitOrder = BitOrder.INTEL, use_cache: bool = True, **kwargs
 ) -> TraceProfile:
-    """Decode one `rlog.zst` and measure it."""
+    """Decode one `rlog.zst` and measure it, through the cache by default."""
+    if use_cache and not kwargs:
+        return analyze_frameset(load_frames(path, root=root), order)
     return analyze_frames(iter_frames(path, root=root, **kwargs), order)

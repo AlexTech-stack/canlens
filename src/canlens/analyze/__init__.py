@@ -16,12 +16,19 @@ from .bits import (
     BitProfile,
     bit_entropy,
     bit_matrix,
+    bit_matrix_from_bytes,
     classify_bits,
     profile_bits,
     transition_rate,
 )
 from .timing import Cadence, TimingProfile, profile_timing
-from .trace import MessageProfile, TraceProfile, analyze_frames, analyze_segment
+from .trace import (
+    MessageProfile,
+    TraceProfile,
+    analyze_frames,
+    analyze_frameset,
+    analyze_segment,
+)
 
 __all__ = [
     "KIND_ORDER",
@@ -33,11 +40,14 @@ __all__ = [
     "TimingProfile",
     "TraceProfile",
     "analyze_frames",
+    "analyze_frameset",
     "analyze_segment",
     "bit_entropy",
     "bit_matrix",
+    "bit_matrix_from_bytes",
     "classify_bits",
     "profile_bits",
+    "profile_bits_from_bytes",
     "profile_timing",
     "transition_rate",
 ]

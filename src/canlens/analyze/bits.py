@@ -101,6 +101,24 @@ def bit_matrix(
     return np.unpackbits(raw, axis=1, bitorder=order.numpy_bitorder)
 
 
+def bit_matrix_from_bytes(payloads: np.ndarray, order: BitOrder = BitOrder.INTEL) -> np.ndarray:
+    """Unpack an (n_frames, width) byte matrix into bits.
+
+    The columnar path: a FrameSet gathers a message's payloads straight out of
+    its blob by index, so there is no list of `bytes` to join back together.
+    """
+    if payloads.size == 0:
+        return np.zeros((payloads.shape[0], payloads.shape[1] * 8), dtype=np.uint8)
+    return np.unpackbits(payloads, axis=1, bitorder=order.numpy_bitorder)
+
+
+def profile_bits_from_bytes(
+    payloads: np.ndarray, order: BitOrder = BitOrder.INTEL
+) -> BitProfile:
+    """Measure every bit position of an (n_frames, width) byte matrix."""
+    return _profile(bit_matrix_from_bytes(payloads, order), payloads.shape[1], order)
+
+
 def bit_entropy(matrix: np.ndarray) -> np.ndarray:
     """Shannon entropy per bit position, in bits (0.0 constant .. 1.0 uniform)."""
     if matrix.shape[0] == 0:
@@ -174,7 +192,10 @@ def profile_bits(
     payloads: list[bytes], width: int, order: BitOrder = BitOrder.INTEL
 ) -> BitProfile:
     """Measure every bit position across a stack of same-width payloads."""
-    matrix = bit_matrix(payloads, width, order)
+    return _profile(bit_matrix(payloads, width, order), width, order)
+
+
+def _profile(matrix: np.ndarray, width: int, order: BitOrder) -> BitProfile:
     entropy = bit_entropy(matrix)
     rates = transition_rate(matrix)
     ones = matrix.mean(axis=0) if matrix.shape[0] else np.zeros(width * 8)

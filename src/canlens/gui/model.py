@@ -11,12 +11,12 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..analyze import TraceProfile, analyze_frames
+from ..analyze import TraceProfile, analyze_frameset
 from ..analyze.bits import BitOrder, bit_matrix
-from ..decode import iter_frames
+from ..decode import load_frames
 from ..export import MessageEntry, SignalEntry
 from ..filters import TraceFilter
-from ..infer import MessageInference, infer_frames
+from ..infer import MessageInference, infer_frameset
 from ..infer.counters import field_values, score_counter
 from .palette import kinds_to_indices
 
@@ -326,13 +326,12 @@ def load_segment(
     path: str, *, root: str, platform: str | None = None, infer: bool = True
 ) -> SegmentModel:
     """Decode, measure and (optionally) infer one segment for display."""
-    frames = list(iter_frames(path, root=root))
-    profile = analyze_frames(frames)
-    inferences = {m.key: m for m in infer_frames(frames)} if infer else {}
-
-    payloads: dict[tuple[int, int], list[bytes]] = {}
-    for frame in frames:
-        payloads.setdefault((frame.bus, frame.address), []).append(frame.data)
+    # Columnar throughout: the cache is only worth having if nothing turns
+    # the trace back into four hundred thousand CanFrame objects on the way in.
+    frames = load_frames(path, root=root)
+    profile = analyze_frameset(frames)
+    inferences = {m.key: m for m in infer_frameset(frames)} if infer else {}
+    payloads = {message.key: message.payloads() for message in frames.group()}
 
     rows = [
         MessageRow(
@@ -349,10 +348,6 @@ def load_segment(
     ]
     # Ordered by identifier, never by entropy: see MessageRow.sort_key.
     rows.sort(key=lambda row: row.sort_key)
-    # Only the dominant payload length, matching how the bit stats were pooled.
-    for row_ in rows:
-        payloads[row_.key] = [p for p in payloads[row_.key] if len(p) == row_.width]
-
     return SegmentModel(
         path=path,
         root=root,

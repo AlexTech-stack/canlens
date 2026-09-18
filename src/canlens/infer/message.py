@@ -10,8 +10,16 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..analyze.bits import BitOrder, BitProfile, bit_matrix, profile_bits
-from ..decode import CanFrame, iter_frames
+from ..analyze.bits import (
+    BitOrder,
+    BitProfile,
+    bit_matrix,
+    bit_matrix_from_bytes,
+    profile_bits,
+    profile_bits_from_bytes,
+)
+from ..decode import CanFrame, iter_frames, load_frames
+from ..decode.frameset import FrameSet, Message
 from .checksums import ChecksumHypothesis, find_checksums
 from .counters import CounterHypothesis, find_counters
 from .crc16 import Crc16Hypothesis, find_crc16
@@ -80,6 +88,19 @@ def infer_message(
     width = len(payloads[0]) if payloads else 0
     bits = profile_bits(list(payloads), width, order)
     matrix = bit_matrix(list(payloads), width, order)
+    return _build(bus, address, width, list(payloads), bits, matrix, **kwargs)
+
+
+def _build(
+    bus: int,
+    address: int,
+    width: int,
+    payloads: Sequence[bytes],
+    bits: BitProfile,
+    matrix: np.ndarray,
+    **kwargs,
+) -> MessageInference:
+    """Run every detector over one message's payloads."""
     candidates = set(checksum_candidate_bytes(bits))
     crc16_candidates = set(checksum_candidate_bytes(bits, min_rate=CRC16_BYTE_MIN_RATE))
     return MessageInference(
@@ -104,14 +125,41 @@ def infer_message(
     )
 
 
+def infer_message_columnar(
+    message: Message, *, order: BitOrder = BitOrder.INTEL, **kwargs
+) -> MessageInference:
+    """Infer one message straight from its columns."""
+    byte_matrix = message.bytes_matrix()
+    bits = profile_bits_from_bytes(byte_matrix, order)
+    matrix = bit_matrix_from_bytes(byte_matrix, order)
+    payloads = message.payloads()
+    return _build(message.bus, message.address, message.width, payloads, bits, matrix, **kwargs)
+
+
+def infer_frameset(
+    frames: FrameSet, *, order: BitOrder = BitOrder.INTEL, min_frames: int = 32
+) -> list[MessageInference]:
+    """Infer every message of a columnar trace. The fast path."""
+    return [
+        infer_message_columnar(message, order=order)
+        for message in frames.group(min_frames=min_frames)
+    ]
+
+
 def infer_frames(
-    frames: Iterable[CanFrame], *, order: BitOrder = BitOrder.INTEL, min_frames: int = 32
+    frames: Iterable[CanFrame] | FrameSet,
+    *,
+    order: BitOrder = BitOrder.INTEL,
+    min_frames: int = 32,
 ) -> list[MessageInference]:
     """Group a frame stream by message and infer each one.
 
     Messages seen fewer than `min_frames` times are skipped: a counter or a
     checksum claimed from a handful of samples is noise dressed as a finding.
     """
+    if isinstance(frames, FrameSet):
+        return infer_frameset(frames, order=order, min_frames=min_frames)
+
     payloads: dict[tuple[int, int], list[bytes]] = defaultdict(list)
     for frame in frames:
         payloads[(frame.bus, frame.address)].append(frame.data)
@@ -130,7 +178,9 @@ def infer_frames(
 
 
 def infer_segment(
-    path: str, *, root: str, order: BitOrder = BitOrder.INTEL, **kwargs
+    path: str, *, root: str, order: BitOrder = BitOrder.INTEL, use_cache: bool = True, **kwargs
 ) -> list[MessageInference]:
-    """Decode one segment and infer every message in it."""
+    """Decode one segment and infer every message, through the cache by default."""
+    if use_cache:
+        return infer_frameset(load_frames(path, root=root), order=order, **kwargs)
     return infer_frames(iter_frames(path, root=root), order=order, **kwargs)
