@@ -308,6 +308,72 @@ def default_jobs() -> int:
     return max(1, (os.cpu_count() or 2) // 2)
 
 
+def cmd_corroborate(args) -> int:
+    from .corroborate import corroborate_platform
+    from .render import bit_strip, field_ruler, legend, supports_color
+
+    def progress(done: int, total: int) -> None:
+        if done % 25 == 0 or done == total:
+            print(f"  {done}/{total} segments", file=sys.stderr, flush=True)
+
+    result = corroborate_platform(args.platform, root=args.root, limit=args.limit, progress=progress)
+    if not result.segments:
+        print(f"canlens: nothing local for {args.platform}", file=sys.stderr)
+        return 1
+    print(f"{result.platform}: {result.segments} segments from {result.devices} devices, "
+          f"{len(result)} messages")
+
+    if args.address is not None:
+        address = int(args.address, 0)
+        matches = [m for m in result.by_identifier() if m.address == address
+                   and (args.bus is None or m.bus == args.bus)]
+        if not matches:
+            print(f"canlens: 0x{address:X} not seen on {args.platform}", file=sys.stderr)
+            return 1
+        color = supports_color() and not args.no_color
+        for m in matches:
+            print(f"\n{m}   width {m.width} ({m.width_agreement:.0%} agree)   "
+                  f"in {m.segments}/{result.segments} segments, {m.devices}/{result.devices} devices   "
+                  f"layout agreement {m.agreement:.0%}")
+            print(f"  {bit_strip(m.kinds, color=color)}")
+            # Agreement per bit as a decile digit; ! marks a rarely-moving bit.
+            marks = {i: ("!" if b.rare else str(min(9, int(b.agreement * 10))))
+                     for i, b in enumerate(m.bits)}
+            print(f"  {field_ruler(marks, len(m.bits))}")
+            if m.rare_bits:
+                print(f"  rare bits (constant in most segments, moving in some): {m.rare_bits}")
+            for ctr in m.counters:
+                print(f"  counter   {ctr}")
+            for chk in m.checksums:
+                print(f"  checksum  {chk}")
+            for crc in m.crc16s:
+                print(f"  crc16     {crc}")
+            if not (m.counters or m.checksums or m.crc16s):
+                print("  no counter or checksum found in any segment")
+        print(f"\n{legend(color)}   digits: agreement decile   !: rare bit")
+        return 0
+
+    rows = result.by_identifier()[: args.top]
+    print(f"\n{'message':<14}{'seg':>5}{'dev':>5}{'w':>4}{'agree':>7}{'rare':>6}  findings")
+    for m in rows:
+        findings = []
+        for ctr in m.counters:
+            findings.append(f"ctr {ctr.length}b@{ctr.start_bit} [{ctr.evidence.tier}"
+                            + (",contested" if ctr.contested else "") + "]")
+        for chk in m.checksums:
+            findings.append(f"{chk.algorithm}@{chk.byte_index} [{chk.evidence.tier}"
+                            + (",contested" if chk.contested else "") + "]")
+        for crc in m.crc16s:
+            ident = f"/id{crc.data_id:04X}" if crc.data_id is not None else ""
+            findings.append(f"{crc.algorithm}@{crc.start_byte}{ident} [{crc.evidence.tier}"
+                            + (",contested" if crc.contested else "") + "]")
+        print(f"{m!s:<14}{m.segments:>5}{m.devices:>5}{m.width:>4}{m.agreement:>7.0%}"
+              f"{len(m.rare_bits):>6}  {', '.join(findings) or '-'}")
+    if len(result) > args.top:
+        print(f"... and {len(result) - args.top} more (use --top)")
+    return 0
+
+
 def cmd_cache_build(args) -> int:
     """Decode and infer every local segment once, so later passes are hits.
 
@@ -540,6 +606,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path", help="path to rlog.zst")
     p.add_argument("-o", "--output", required=True, help="destination .json")
     p.set_defaults(func=cmd_export_pdu_db)
+
+    p = sub.add_parser("corroborate", help="what holds across every local segment of a platform")
+    p.add_argument("platform", help="platform key; see 'canlens corpus list'")
+    p.add_argument("--address", help="one message in detail, e.g. 0x211")
+    p.add_argument("--bus", type=int, help="with --address: restrict to one bus")
+    p.add_argument("--limit", type=int, help="use at most this many segments")
+    p.add_argument("--top", type=int, default=40, help="rows in the overview (default: 40)")
+    p.add_argument("--no-color", action="store_true", help="never emit ANSI colour")
+    p.set_defaults(func=cmd_corroborate, op=None)
 
     cache = sub.add_parser("cache", help="decode segments once and keep the columns")
     cops = cache.add_subparsers(dest="op", required=True)

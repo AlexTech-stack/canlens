@@ -511,7 +511,90 @@ across 69 messages of one segment is suggestive, but holding across thousands
 of segments from hundreds of different drivers is proof — and that is
 `corroborate`'s job, not `infer`'s.
 
-## 7. From Python
+## 7. Corroborate
+
+Everything above works on one trace. This is the layer the corpus exists for.
+
+```bash
+canlens corroborate KIA_EV6                       # every message, one line each
+canlens corroborate KIA_EV6 --address 0x211 --bus 0
+```
+
+Each hypothesis `infer` produced is scored by how much of the platform stands
+behind it — and **devices count more than segments**. The corpus stores a
+segment under `<device>/<route>/<index>`, and a device is one physical car.
+Eight hundred segments from one car establish what that car does; eighty from
+thirty cars establish what the platform does. Every piece of evidence carries
+both counts:
+
+```
+crc16     e2e_p05 @ bytes 0-1 (little, data ID 0xFA11; 5/5 seg, 5/5 dev, established)
+```
+
+Tiers (`ESTABLISHED_SUPPORT`, `PARTIAL_SUPPORT`, `MIN_DEVICES` in
+`corroborate/consensus.py`, heuristics like every other threshold here):
+
+| tier | means |
+|---|---|
+| `established` | ≥90% of the segments carrying the message agree, from ≥3 cars |
+| `consistent` | ≥90% agree, but fewer than 3 cars — true of everything seen, not shown to generalise |
+| `partial` | 50–90% |
+| `weak` | under 50%; treat as a single-trace guess |
+
+Two hypotheses claiming the same bits with different parameters — two
+strides for one counter, two Data IDs for one CRC — are both kept and both
+marked **contested**; the evidence counts say which one the corpus backs.
+
+### What only the corpus can show
+
+The per-bit line under the strip is the agreement decile per bit, and a `!`
+marks a **rare bit**: constant in most segments, moving in some.
+
+```
+  ######## ######## ##**+++: *+.+:... ****:*.. #**++::: ...
+  99999999 99999999 99999999 98966999 889669!9 99999696 ...
+  rare bits (constant in most segments, moving in some): [38, 102, 103, 130, 131, 175]
+```
+
+A single trace classifies those as padding. Across cars they are states that
+rarely change — a door, a mode, a warning — and no one recording contains
+enough of them to tell. That list is a to-do list for the bit selector.
+
+### A finding the layer surfaced on its first run
+
+KIA_EV6 has 11 local segments from 10 cars, yet every E2E-protected message
+shows `5/11 seg, 5/10 dev`. Splitting the segments by whether bus 0 carries
+0x211 and comparing address sets per bus:
+
+```
+                B-bus0  B-bus1  B-bus2
+  A-bus0 ( 70)    0.00    0.29    0.00
+  A-bus1 (149)    0.90    0.00    0.05
+  A-bus2 ( 20)    0.01    0.00    0.04
+```
+
+The 149-ID main bus is numbered **1** in one group of cars and **0** in the
+other — and the 70-ID bus carrying every E2E message exists in only one
+group. One platform key, two harness configurations, one of which never sees
+the ADAS bus. The presence numbers were honest; the reason is wiring. Keying
+on `(bus, address)` is the right behaviour given that, but it means support
+for bus-0 messages is capped at the cars wired to carry it. Aligning buses
+across configurations by address-set overlap is a natural next feature and
+deliberately not done blind.
+
+### An honest gap the layer exposed
+
+RIVIAN_R1_GEN1 (20 segments, 19 cars) yields 287 counters and **zero
+checksums against 1,251 checksum-shaped bytes** — bytes whose every bit is
+noisy. Rivian's scheme is outside the 8-bit algorithms and the CRC16 forms
+tested. The next candidates, with the AUTOSAR specs at hand, are E2E
+Profiles 1 and 11 (CRC-8 with a solved-for Data ID, as was done for Profile 5).
+
+Corroboration reads the inference results cache, so a platform pass costs
+milliseconds per segment once `cache build` has run: 11 EV6 segments in
+0.7 s.
+
+## 8. From Python
 
 ```python
 from canlens.corpus import Manifest
@@ -746,7 +829,7 @@ Headless check, the same way BoAt verifies its Qt client:
 QT_QPA_PLATFORM=offscreen canlens gui
 ```
 
-## 8. Gotchas
+## 9. Gotchas
 
 **Mixed payload lengths.** When a message's length varies, bit statistics are
 computed over the *dominant* length only and the row is flagged with `*`.
@@ -769,7 +852,7 @@ short.
 
 ---
 
-## 9. Development
+## 10. Development
 
 ```bash
 ./.venv/bin/pytest -q
@@ -797,7 +880,7 @@ even though development happens on 3.14.
 | `decode/` | working — `rlog.zst` → `CanFrame` |
 | `analyze/` | working — timing, entropy, per-bit classification |
 | `infer/` | counters, 8-bit checksums, 16-bit CRCs and E2E Profile 5 Data IDs working; signal boundaries and multiplexors still to do |
-| `corroborate/` | **not implemented** — cross-segment and cross-platform agreement |
+| `corroborate/` | cross-segment agreement with device-weighted evidence — **working**; cross-platform and bus alignment to do |
 | `truth/` | **not implemented** — opendbc ground truth, scoring the engine |
 
 `analyze` deliberately stops at measurement. It will tell you a bit flips on

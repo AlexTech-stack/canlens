@@ -3,11 +3,42 @@
 
 """Cross-segment and cross-platform corroboration.
 
-The layer a single-trace tool cannot have. A checksum hypothesis that holds
-across thousands of segments from hundreds of independent drivers is
-established rather than guessed; a scheme solved on one platform becomes a
-prior for the rest of that manufacturer's range; two model years of the same
-platform diff to show what moved.
-
-Not yet implemented.
+The layer a single-trace tool cannot have. A hypothesis that holds across many
+segments from many independent cars is established rather than guessed, and
+the spread of segments reveals bits -- rarely-changing states -- that no one
+trace can show at all.
 """
+
+from .consensus import (
+    ESTABLISHED_SUPPORT,
+    MIN_DEVICES,
+    PARTIAL_SUPPORT,
+    BitConsensus,
+    ChecksumConsensus,
+    CounterConsensus,
+    Crc16Consensus,
+    Evidence,
+    MessageConsensus,
+    PlatformConsensus,
+    Tier,
+    corroborate,
+    corroborate_platform,
+    device_of,
+)
+
+__all__ = [
+    "ESTABLISHED_SUPPORT",
+    "MIN_DEVICES",
+    "PARTIAL_SUPPORT",
+    "BitConsensus",
+    "ChecksumConsensus",
+    "CounterConsensus",
+    "Crc16Consensus",
+    "Evidence",
+    "MessageConsensus",
+    "PlatformConsensus",
+    "Tier",
+    "corroborate",
+    "corroborate_platform",
+    "device_of",
+]
