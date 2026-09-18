@@ -9,7 +9,12 @@ across many traces is :mod:`canlens.corroborate`'s job.
 """
 
 from .checksums import ALGORITHMS, ChecksumHypothesis, find_checksums, score_algorithm
-from .counters import CounterHypothesis, field_values, find_counters, score_counter
+from .counters import (
+    CounterHypothesis,
+    field_values,
+    find_counters,
+    score_counter,
+)
 from .crc16 import (
     CRC16_ALGORITHMS,
     Crc16Hypothesis,

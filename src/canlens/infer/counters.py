@@ -50,7 +50,10 @@ def field_values(matrix: np.ndarray, start: int, length: int) -> np.ndarray:
     DBC Intel signal is laid out: the first bit of the slice is the LSB.
     """
     weights = (1 << np.arange(length)).astype(np.int64)
-    return matrix[:, start : start + length].astype(np.int64) @ weights
+    window = matrix[:, start : start + length]
+    if window.dtype != np.int64:
+        window = window.astype(np.int64)
+    return window @ weights
 
 
 def score_counter(values: np.ndarray, length: int) -> tuple[int, float]:
@@ -103,13 +106,22 @@ def find_counters(
         return []
 
     lsb_rates = (np.diff(matrix.astype(np.int8), axis=0) != 0).mean(axis=0)
-    starts = [s for s in range(bits) if lsb_rates[s] >= min_lsb_rate]
+    eligible = lsb_rates >= min_lsb_rate
+
+    # Converted once: field_values used to cast its slice on every call.
+    wide = matrix.astype(np.int64)
+
+    # Batching every start position of a given length into one sliding-window
+    # matmul was tried and is slower: measured 3.18s against 2.65s, because on
+    # a 32-byte payload only a few dozen of 250-odd offsets are eligible and
+    # computing them all costs more than the per-position calls it saves.
+    positions = np.flatnonzero(eligible)
 
     found: list[CounterHypothesis] = []
     for length in range(max_length, min_length - 1, -1):
         modulus = 1 << length
-        for start in (s for s in starts if s + length <= bits):
-            values = field_values(matrix, start, length)
+        for start in positions[positions + length <= bits]:
+            values = field_values(wide, int(start), length)
             stride, rate = score_counter(values, length)
             if stride == 0 or rate < min_match:
                 continue
@@ -117,7 +129,7 @@ def find_counters(
                 continue
             if np.unique(values).size < min_coverage * modulus:
                 continue
-            candidate = CounterHypothesis(start, length, stride, rate, frames)
+            candidate = CounterHypothesis(int(start), length, stride, rate, frames)
             if any(accepted.contains(candidate) for accepted in found):
                 continue
             found.append(candidate)

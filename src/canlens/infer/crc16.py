@@ -23,6 +23,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+import numpy as np
+
 POLY_CCITT = 0x1021
 POLY_ARC = 0x8005
 
@@ -84,6 +86,82 @@ CRC16_ALGORITHMS = {
     "crc16_ccitt_zero": crc16_ccitt_zero,
     "crc16_arc": crc16_arc,
 }
+
+
+# ---------------------------------------------------------------------------
+# Vectorised forms. The scalar functions above stay as the readable reference
+# and are what the known-answer tests check; these do the same arithmetic one
+# byte *column* at a time across every frame, which is what makes a whole-trace
+# verification a handful of numpy passes instead of half a million Python
+# loops. `test_vectorised_matches_scalar` holds the two together.
+
+CCITT_TABLE_NP = np.array(CCITT_TABLE, dtype=np.uint16)
+ARC_TABLE_NP = np.array(ARC_TABLE, dtype=np.uint16)
+REFLECT8 = np.array([_reflect(b, 8) for b in range(256)], dtype=np.uint8)
+
+
+def _step(
+    crc: np.ndarray, byte_column: np.ndarray | np.uint8, table: np.ndarray
+) -> np.ndarray:
+    index = ((crc >> 8) ^ byte_column).astype(np.uint8)
+    return ((crc << 8) ^ table[index]).astype(np.uint16)
+
+
+def v_crc16(
+    matrix: np.ndarray,
+    *,
+    skip: tuple[int, int] | None = None,
+    init: int = 0xFFFF,
+    table: np.ndarray = CCITT_TABLE_NP,
+    reflect_in: bool = False,
+) -> np.ndarray:
+    """Running CRC16 over every frame, optionally skipping two byte columns."""
+    crc = np.full(matrix.shape[0], init, dtype=np.uint16)
+    for column in range(matrix.shape[1]):
+        if skip is not None and skip[0] <= column < skip[1]:
+            continue
+        data = matrix[:, column]
+        crc = _step(crc, REFLECT8[data] if reflect_in else data, table)
+    return crc
+
+
+def v_append(crc: np.ndarray, byte_value: int, table: np.ndarray = CCITT_TABLE_NP) -> np.ndarray:
+    """Feed one more constant byte into a running CRC."""
+    return _step(crc, np.uint8(byte_value), table)
+
+
+def _reflect16(values: np.ndarray) -> np.ndarray:
+    out = np.zeros_like(values)
+    for bit in range(16):
+        out |= ((values >> bit) & 1).astype(np.uint16) << (15 - bit)
+    return out
+
+
+def v_crc16_autosar(matrix: np.ndarray, skip: tuple[int, int] | None = None) -> np.ndarray:
+    return v_crc16(matrix, skip=skip, init=0xFFFF)
+
+
+def v_crc16_ccitt_zero(matrix: np.ndarray, skip: tuple[int, int] | None = None) -> np.ndarray:
+    return v_crc16(matrix, skip=skip, init=0x0000)
+
+
+def v_crc16_arc(matrix: np.ndarray, skip: tuple[int, int] | None = None) -> np.ndarray:
+    return _reflect16(
+        v_crc16(matrix, skip=skip, init=0x0000, table=ARC_TABLE_NP, reflect_in=True)
+    )
+
+
+V_CRC16_ALGORITHMS = {
+    "crc16_autosar": v_crc16_autosar,
+    "crc16_ccitt_zero": v_crc16_ccitt_zero,
+    "crc16_arc": v_crc16_arc,
+}
+
+
+def v_read_crc(matrix: np.ndarray, start: int, byteorder: str) -> np.ndarray:
+    """The stored 2-byte CRC of every frame."""
+    low, high = matrix[:, start].astype(np.uint16), matrix[:, start + 1].astype(np.uint16)
+    return (low | (high << 8)) if byteorder == "little" else ((low << 8) | high)
 
 
 @dataclass(frozen=True)
@@ -173,6 +251,62 @@ def _rate(payloads: Sequence[bytes], predicate, min_match: float = 0.0) -> float
     return hits / total
 
 
+def _plain_hit(
+    blob: np.ndarray, sample: np.ndarray, start: int, stored: dict[str, np.ndarray],
+    min_match: float, frames: int,
+) -> Crc16Hypothesis | None:
+    """A 2-byte field at `start` that a plain CRC16 reproduces.
+
+    Screened on a slice before being verified against every frame: almost all
+    candidates disagree within the first handful, and checking them thoroughly
+    is what made the vectorised version no faster than the scalar one it
+    replaced. The CRC over the data does not depend on the byte order, so one
+    pass serves both readings of the stored value.
+    """
+    sampled = {order: value[: sample.shape[0]] for order, value in stored.items()}
+    for name, fn in V_CRC16_ALGORITHMS.items():
+        screened = fn(sample, (start, start + 2))
+        orders = [
+            order
+            for order in ("little", "big")
+            if float((screened == sampled[order]).mean()) >= min_match
+        ]
+        if not orders:
+            continue
+        computed = fn(blob, (start, start + 2))
+        for byteorder in orders:
+            rate = float((computed == stored[byteorder]).mean())
+            if rate >= min_match:
+                return Crc16Hypothesis(start, name, byteorder, rate, frames)
+    return None
+
+
+def _p05_hit(
+    blob: np.ndarray, screen: Sequence[bytes], start: int, byteorder: str,
+    stored: np.ndarray, min_match: float, frames: int,
+) -> Crc16Hypothesis | None:
+    """A Profile 5 field at `start`, solving for the Data ID that explains it."""
+    candidates: set[int] | None = None
+    for payload in screen[:4]:
+        # Intersect the solutions from a few frames: a real Data ID satisfies
+        # every frame, a coincidence satisfies one.
+        solutions = solve_data_id(payload, start, byteorder)
+        candidates = solutions if candidates is None else candidates & solutions
+        if not candidates:
+            return None
+    if not candidates:
+        return None
+    # The CRC over the data is the same whatever the Data ID, so it is computed
+    # once and only the two appended bytes vary.
+    base = v_crc16_autosar(blob, (start, start + 2))
+    for data_id in sorted(candidates):
+        computed = v_append(v_append(base, data_id & 0xFF), (data_id >> 8) & 0xFF)
+        rate = float((computed == stored).mean())
+        if rate >= min_match:
+            return Crc16Hypothesis(start, "e2e_p05", byteorder, rate, frames, data_id)
+    return None
+
+
 def find_crc16(
     payloads: Sequence[bytes],
     *,
@@ -180,54 +314,35 @@ def find_crc16(
     min_match: float = 0.99,
     screen_frames: int = 64,
     search_data_id: bool = True,
+    matrix: np.ndarray | None = None,
 ) -> list[Crc16Hypothesis]:
     """Look for a 2-byte CRC field, with or without an E2E Profile 5 Data ID."""
     if len(payloads) < 2:
         return []
-    width = len(payloads[0])
+    from .checksums import as_matrix
+
+    blob = as_matrix(payloads) if matrix is None else matrix
+    width = blob.shape[1]
     starts = (
         [s for s in candidate_bytes if 0 <= s < width - 1]
         if candidate_bytes is not None
         else range(width - 1)
     )
     screen = list(payloads[:screen_frames])
+    sample = blob[:screen_frames]
+    frames = len(payloads)
     found: list[Crc16Hypothesis] = []
 
     for start in starts:
-        for byteorder in ("little", "big"):
-            hit = None
-            for name, fn in CRC16_ALGORITHMS.items():
-                def plain(p: bytes, fn=fn, start=start, byteorder=byteorder) -> bool:
-                    return fn(without(p, start)) == read_crc(p, start, byteorder)
-
-                if _rate(screen, plain, min_match) < min_match:
-                    continue
-                rate = _rate(payloads, plain, min_match)
-                if rate >= min_match:
-                    hit = Crc16Hypothesis(start, name, byteorder, rate, len(payloads))
+        stored = {order: v_read_crc(blob, start, order) for order in ("little", "big")}
+        hit = _plain_hit(blob, sample, start, stored, min_match, frames)
+        if hit is None and search_data_id:
+            for byteorder in ("little", "big"):
+                hit = _p05_hit(
+                    blob, screen, start, byteorder, stored[byteorder], min_match, frames
+                )
+                if hit is not None:
                     break
-
-            if hit is None and search_data_id:
-                # Intersect the solutions from a few frames: a real Data ID
-                # satisfies every frame, a coincidence satisfies one.
-                candidates: set[int] | None = None
-                for payload in screen[:4]:
-                    solutions = solve_data_id(payload, start, byteorder)
-                    candidates = solutions if candidates is None else candidates & solutions
-                    if not candidates:
-                        break
-                for data_id in sorted(candidates or ()):
-                    def p05(p: bytes, start=start, data_id=data_id, byteorder=byteorder) -> bool:
-                        return e2e_p05(p, start, data_id) == read_crc(p, start, byteorder)
-
-                    rate = _rate(payloads, p05, min_match)
-                    if rate >= min_match:
-                        hit = Crc16Hypothesis(
-                            start, "e2e_p05", byteorder, rate, len(payloads), data_id
-                        )
-                        break
-
-            if hit is not None:
-                found.append(hit)
-                break  # one byte order is enough for this position
+        if hit is not None:
+            found.append(hit)
     return found

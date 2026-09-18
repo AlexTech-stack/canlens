@@ -98,9 +98,15 @@ def _build(
     payloads: Sequence[bytes],
     bits: BitProfile,
     matrix: np.ndarray,
+    byte_matrix: np.ndarray | None = None,
     **kwargs,
 ) -> MessageInference:
-    """Run every detector over one message's payloads."""
+    """Run every detector over one message's payloads.
+
+    `byte_matrix` is the payloads already gathered as an (n, width) array. The
+    checksum and CRC searches score every frame at once against it, so handing
+    over the one the caller already has avoids rebuilding it per message.
+    """
     candidates = set(checksum_candidate_bytes(bits))
     crc16_candidates = set(checksum_candidate_bytes(bits, min_rate=CRC16_BYTE_MIN_RATE))
     return MessageInference(
@@ -114,12 +120,14 @@ def _build(
             payloads,
             address,
             candidate_bytes=sorted(candidates),
+            matrix=byte_matrix,
             **kwargs.get("checksum_options", {}),
         ),
         # A 16-bit CRC needs two adjacent bytes that both move like noise.
         crc16s=find_crc16(
             payloads,
             candidate_bytes=[s for s in crc16_candidates if s + 1 in crc16_candidates],
+            matrix=byte_matrix,
             **kwargs.get("crc16_options", {}),
         ),
     )
@@ -133,7 +141,10 @@ def infer_message_columnar(
     bits = profile_bits_from_bytes(byte_matrix, order)
     matrix = bit_matrix_from_bytes(byte_matrix, order)
     payloads = message.payloads()
-    return _build(message.bus, message.address, message.width, payloads, bits, matrix, **kwargs)
+    return _build(
+        message.bus, message.address, message.width, payloads, bits, matrix,
+        byte_matrix=byte_matrix, **kwargs,
+    )
 
 
 def infer_frameset(

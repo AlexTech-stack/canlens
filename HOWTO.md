@@ -318,11 +318,35 @@ matrix by index arithmetic rather than by slicing out thousands of `bytes`.
 That part matters: rebuilding 400,000 `CanFrame` objects from the cache costs
 0.7 s on its own, which would have capped a 12× cache at about 2×.
 
-**What this does not fix.** The pipeline is now inference-bound. End to end a
-segment went from 4.9 s to 3.6 s, because `infer` is 3.1 s of it and is
-untouched by caching. Its hot spot is `crc16_update`, a pure-Python byte loop
-called 586,000 times; doing the table lookup column-wise over all frames at
-once gives identical results about 8× faster, and is the obvious next step.
+### Vectorised detectors
+
+`infer` was the rest of the cost, and its checksum and CRC searches were
+per-frame Python loops — `crc16_update` alone was called 586,000 times. They
+now score every frame at once against the byte matrix the cache already
+provides. The scalar functions remain as the readable statement of each
+algorithm and as what the known-answer tests check; a test holds the two forms
+to each other for every algorithm, width and byte position.
+
+Measured over the whole local corpus:
+
+```
+full pipeline over 31 segments: 74.3s (2.40s each)
+  before this work:            126.6s (4.08s each)
+  speedup:                       1.7x
+```
+
+**One optimisation was tried and reverted.** Batching every start position of
+a counter scan into a single sliding-window matmul sounds obviously better and
+measured 3.18 s against 2.65 s — on a 32-byte payload only a few dozen of the
+250-odd offsets can begin a counter at all, so computing them all costs more
+than the per-position calls it saves. The comment in `find_counters` records
+the numbers so nobody tries it twice.
+
+**Where the remaining time is.** `infer` is still 2.7 s of the 3.2 s, in the
+counter scan rather than in the CRC work. Parallelism is the untouched lever:
+the pipeline is embarrassingly parallel across segments, and 12 processes
+measured 4.0× earlier — that is the next thing worth doing, and still not a
+reason to leave Python.
 
 ## 6. Infer
 

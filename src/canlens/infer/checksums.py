@@ -13,6 +13,8 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+import numpy as np
+
 # A checksum function sees the whole payload, the message address, and which
 # byte is under test, and returns the byte it expects to find there.
 ChecksumFn = Callable[[bytes, int, int], int]
@@ -61,6 +63,65 @@ def _crc8_factory(poly: int, init: int, xorout: int) -> ChecksumFn:
     return fn
 
 
+def _crc8_table(poly: int) -> np.ndarray:
+    """One byte's worth of CRC8 shifting, precomputed for every input."""
+    table = np.zeros(256, dtype=np.uint8)
+    for value in range(256):
+        crc = value
+        for _ in range(8):
+            crc = ((crc << 1) ^ poly) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+        table[value] = crc
+    return table
+
+
+# Vectorised twins of the scalar algorithms above. Each takes an
+# (n_frames, width) byte matrix and returns the byte it expects at `index` for
+# every frame at once, replacing a Python loop over several hundred thousand
+# payloads. `test_vectorised_matches_scalar` holds them to the originals.
+VectorFn = Callable[[np.ndarray, int, int], np.ndarray]
+
+
+def _sum_without(matrix: np.ndarray, index: int) -> np.ndarray:
+    return matrix.sum(axis=1, dtype=np.uint32) - matrix[:, index]
+
+
+def v_sum8(matrix: np.ndarray, address: int, index: int) -> np.ndarray:
+    return (_sum_without(matrix, index) & 0xFF).astype(np.uint8)
+
+
+def v_sum8_complement(matrix: np.ndarray, address: int, index: int) -> np.ndarray:
+    return ((-_sum_without(matrix, index).astype(np.int64)) & 0xFF).astype(np.uint8)
+
+
+def v_xor8(matrix: np.ndarray, address: int, index: int) -> np.ndarray:
+    # XOR is self-inverse, so the byte under test removes itself again.
+    return np.bitwise_xor.reduce(matrix, axis=1) ^ matrix[:, index]
+
+
+def v_toyota(matrix: np.ndarray, address: int, index: int) -> np.ndarray:
+    folded = (
+        _sum_without(matrix, index)
+        + (address & 0xFF)
+        + ((address >> 8) & 0xFF)
+        + matrix.shape[1]
+    )
+    return (folded & 0xFF).astype(np.uint8)
+
+
+def _v_crc8_factory(poly: int, init: int, xorout: int) -> VectorFn:
+    table = _crc8_table(poly)
+
+    def fn(matrix: np.ndarray, address: int, index: int) -> np.ndarray:
+        crc = np.full(matrix.shape[0], init, dtype=np.uint8)
+        for column in range(matrix.shape[1]):
+            if column == index:
+                continue  # the byte under test is not part of its own input
+            crc = table[crc ^ matrix[:, column]]
+        return crc ^ np.uint8(xorout)
+
+    return fn
+
+
 # Ordered cheapest-and-commonest first; the search stops at the first algorithm
 # that reproduces the byte, so a plain sum is never reported as an exotic CRC.
 ALGORITHMS: dict[str, ChecksumFn] = {
@@ -73,6 +134,26 @@ ALGORITHMS: dict[str, ChecksumFn] = {
     "crc8_2f": _crc8_factory(0x2F, 0xFF, 0xFF),
     "crc8_autosar": _crc8_factory(0x2F, 0xFF, 0x00),
 }
+
+
+VECTOR_ALGORITHMS: dict[str, VectorFn] = {
+    "sum8": v_sum8,
+    "sum8_complement": v_sum8_complement,
+    "xor8": v_xor8,
+    "toyota": v_toyota,
+    "crc8": _v_crc8_factory(0x07, 0x00, 0x00),
+    "crc8_j1850": _v_crc8_factory(0x1D, 0xFF, 0xFF),
+    "crc8_2f": _v_crc8_factory(0x2F, 0xFF, 0xFF),
+    "crc8_autosar": _v_crc8_factory(0x2F, 0xFF, 0x00),
+}
+
+
+def as_matrix(payloads: Sequence[bytes]) -> np.ndarray:
+    """Equal-width payloads as an (n, width) byte matrix."""
+    if not payloads:
+        return np.zeros((0, 0), dtype=np.uint8)
+    width = len(payloads[0])
+    return np.frombuffer(b"".join(payloads), dtype=np.uint8).reshape(len(payloads), width)
 
 
 @dataclass(frozen=True)
@@ -141,6 +222,7 @@ def find_checksums(
     candidate_bytes: Sequence[int] | None = None,
     min_match: float = 0.99,
     screen_frames: int = 256,
+    matrix: np.ndarray | None = None,
 ) -> list[ChecksumHypothesis]:
     """Search for a byte that a known algorithm reproduces.
 
@@ -151,18 +233,21 @@ def find_checksums(
     """
     if not payloads:
         return []
-    width = len(payloads[0])
+    blob = as_matrix(payloads) if matrix is None else matrix
+    width = blob.shape[1]
     positions = candidate_bytes if candidate_bytes is not None else range(width)
-    screen = payloads[:screen_frames]
+    # The screen is now only worth having for very long traces: scoring every
+    # frame is one pass over an array rather than a loop in Python.
+    screen = blob[:screen_frames]
 
     hits: dict[str, list[tuple[int, float]]] = {}
     for index in positions:
         if not 0 <= index < width:
             continue
-        for name, fn in ALGORITHMS.items():
-            if score_algorithm(screen, address, index, fn, min_match) < min_match:
+        for name, fn in VECTOR_ALGORITHMS.items():
+            if float((fn(screen, address, index) == screen[:, index]).mean()) < min_match:
                 continue
-            rate = score_algorithm(payloads, address, index, fn, min_match)
+            rate = float((fn(blob, address, index) == blob[:, index]).mean())
             if rate >= min_match:
                 hits.setdefault(name, []).append((index, rate))
                 break  # first (simplest) algorithm that works wins

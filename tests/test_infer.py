@@ -252,3 +252,79 @@ class TestEarlyExit:
         # A hopeless candidate returns something below the threshold, which is
         # all the caller uses it for.
         assert score_algorithm(payloads, 0x123, 7, ALGORITHMS["xor8"], 0.99) < 0.99
+
+
+class TestVectorisedMatchesScalar:
+    """The vectorised detectors must agree with the scalar reference exactly.
+
+    The scalar versions are the readable statement of each algorithm and what
+    the known-answer tests check; the vectorised ones are what actually runs.
+    They are only safe as a pair if they cannot disagree.
+    """
+
+    @staticmethod
+    def sample(width: int = 8, count: int = 200, seed: int = 5) -> np.ndarray:
+        rng = random.Random(seed)
+        return np.array(
+            [[rng.randrange(256) for _ in range(width)] for _ in range(count)],
+            dtype=np.uint8,
+        )
+
+    @pytest.mark.parametrize("name", list(ALGORITHMS))
+    @pytest.mark.parametrize("index", [0, 3, 7])
+    def test_every_checksum_algorithm(self, name, index):
+        from canlens.infer.checksums import VECTOR_ALGORITHMS
+
+        matrix = self.sample()
+        payloads = [bytes(row) for row in matrix]
+        scalar = [ALGORITHMS[name](p, 0x2C1, index) for p in payloads]
+        vector = VECTOR_ALGORITHMS[name](matrix, 0x2C1, index)
+        assert vector.tolist() == scalar, name
+
+    @pytest.mark.parametrize("width", [2, 8, 32])
+    def test_checksums_at_every_width(self, width):
+        from canlens.infer.checksums import VECTOR_ALGORITHMS
+
+        matrix = self.sample(width=width, count=50)
+        payloads = [bytes(row) for row in matrix]
+        for name, fn in VECTOR_ALGORITHMS.items():
+            scalar = [ALGORITHMS[name](p, 0x100, width - 1) for p in payloads]
+            assert fn(matrix, 0x100, width - 1).tolist() == scalar, (name, width)
+
+    @pytest.mark.parametrize("name", ["crc16_autosar", "crc16_ccitt_zero", "crc16_arc"])
+    def test_every_crc16_algorithm(self, name):
+        from canlens.infer.crc16 import CRC16_ALGORITHMS, V_CRC16_ALGORITHMS, without
+
+        matrix = self.sample(width=16, count=100)
+        payloads = [bytes(row) for row in matrix]
+        scalar = [CRC16_ALGORITHMS[name](without(p, 4)) for p in payloads]
+        vector = V_CRC16_ALGORITHMS[name](matrix, (4, 6))
+        assert vector.tolist() == scalar, name
+
+    def test_crc16_without_skipping_anything(self):
+        from canlens.infer.crc16 import V_CRC16_ALGORITHMS, crc16_autosar
+
+        matrix = self.sample(width=8, count=40)
+        scalar = [crc16_autosar(bytes(row)) for row in matrix]
+        assert V_CRC16_ALGORITHMS["crc16_autosar"](matrix, None).tolist() == scalar
+
+    def test_reading_the_stored_crc(self):
+        from canlens.infer.crc16 import read_crc, v_read_crc
+
+        matrix = self.sample(width=8, count=30)
+        payloads = [bytes(row) for row in matrix]
+        for order in ("little", "big"):
+            scalar = [read_crc(p, 2, order) for p in payloads]
+            assert v_read_crc(matrix, 2, order).tolist() == scalar
+
+    def test_appending_a_data_id_byte(self):
+        from canlens.infer.crc16 import crc16_update, v_append, v_crc16_autosar
+
+        matrix = self.sample(width=8, count=25)
+        base = v_crc16_autosar(matrix, (0, 2))
+        appended = v_append(v_append(base, 0x5F), 0x0A)
+        from canlens.infer.crc16 import e2e_p05
+
+        scalar = [e2e_p05(bytes(row), 0, 0x0A5F) for row in matrix]
+        assert appended.tolist() == scalar
+        assert crc16_update(0xFFFF, b"") == 0xFFFF
