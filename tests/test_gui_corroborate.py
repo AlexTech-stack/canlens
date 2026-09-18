@@ -100,7 +100,7 @@ class TestRun:
 
     def test_findings_column_carries_the_tier(self, screen):
         screen._on_complete(consensus())
-        assert row_texts(screen, 6)[0] == "ctr 8b@0 [established], e2e_p05@0/idFA10 [established]"
+        assert row_texts(screen, 6)[0] == "ctr 8bit@0 [established], e2e_p05@0/idFA10 [established]"
 
     def test_rare_column(self, screen):
         screen._on_complete(consensus())

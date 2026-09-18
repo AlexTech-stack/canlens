@@ -268,7 +268,7 @@ class CorroborateScreen(QtWidgets.QWidget):
     def _findings_text(m: MessageConsensus) -> str:
         parts = []
         for ctr in m.counters:
-            parts.append(f"ctr {ctr.length}b@{ctr.start_bit} [{ctr.evidence.tier}"
+            parts.append(f"ctr {ctr.length}bit@{ctr.start_bit} [{ctr.evidence.tier}"
                          + (",contested" if ctr.contested else "") + "]")
         for chk in m.checksums:
             ident = (

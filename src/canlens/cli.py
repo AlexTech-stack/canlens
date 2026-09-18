@@ -182,7 +182,7 @@ def cmd_infer_trace(args) -> int:
     print(f"\n{'message':<14}{'frames':>7}  {'counters':<35}checksums")
     for m in hits[: args.top]:
         counters = ", ".join(
-            f"{c.length}b@{c.start_bit}"
+            f"{c.length}bit@{c.start_bit}"
             + ("" if c.stride == 1 else f"/{c.stride}")
             + f" {c.match_rate:.0%}"
             for c in m.counters
@@ -361,7 +361,7 @@ def cmd_corroborate(args) -> int:
     for m in rows:
         findings = []
         for ctr in m.counters:
-            findings.append(f"ctr {ctr.length}b@{ctr.start_bit} [{ctr.evidence.tier}"
+            findings.append(f"ctr {ctr.length}bit@{ctr.start_bit} [{ctr.evidence.tier}"
                             + (",contested" if ctr.contested else "") + "]")
         for chk in m.checksums:
             ident = (
