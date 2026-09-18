@@ -515,6 +515,7 @@ class Workbench(QtWidgets.QMainWindow):
 
         self.data = DataScreen(root, self.manifest)
         self.data.open_segment.connect(self.open_in_heat_map)
+        self.data.corpus_changed.connect(self._on_corpus_changed)
 
         # The nav bar. Data leads because the first question on a fresh
         # machine is what is on disk, not what is in a trace.
@@ -535,12 +536,38 @@ class Workbench(QtWidgets.QMainWindow):
 
     def _populate(self) -> None:
         """List every locally present segment, labelled by platform."""
-        for entry in self.manifest.by_size():
-            for segment in entry.segments:
-                path = segment_dest(self.root, segment)
-                if os.path.exists(path):
-                    self._all_paths.append((entry.key, path))
+        self._scan_paths()
         self._list_segments()
+
+    def _scan_paths(self) -> None:
+        """Re-read which segments are on disk."""
+        self._all_paths = [
+            (entry.key, path)
+            for entry in self.manifest.by_size()
+            for segment in entry.segments
+            if os.path.exists(path := segment_dest(self.root, segment))
+        ]
+
+    def _on_corpus_changed(self) -> None:
+        """Follow a fetch or a delete on the Data screen.
+
+        Without this the heat map keeps listing segments that were deleted
+        minutes ago and opening one raises FileNotFoundError, while anything
+        newly fetched never appears at all.
+        """
+        open_path = self._model.path if self._model is not None else None
+        lost = open_path is not None and not os.path.exists(open_path)
+        if lost:
+            self._model = None
+        self._scan_paths()
+        self._list_segments(keep=open_path)
+        if lost:
+            # Said after the relist, which opens whichever segment is now
+            # selected and would otherwise overwrite this. Quietly swapping in
+            # a neighbour leaves no sign that what was on screen is gone.
+            self.statusBar().showMessage(
+                "the segment that was open has been deleted — showing the next one"
+            )
 
     def _list_segments(self, keep: str | None = None) -> None:
         """Rebuild the segment list under the current filter.
@@ -576,9 +603,31 @@ class Workbench(QtWidgets.QMainWindow):
         if self.screens.currentIndex() != HEAT_MAP_TAB:
             return
         platform, path = self._paths[index]
+        if not os.path.exists(path):
+            # A segment can be deleted between being listed and being opened,
+            # from this window or from anywhere else. Relisting opens whatever
+            # is now selected, so the explanation is set afterwards or it is
+            # immediately overwritten by that load.
+            self._scan_paths()
+            self._list_segments()
+            self.statusBar().showMessage(
+                f"{os.path.basename(os.path.dirname(path))} is no longer on disk"
+            )
+            return
         self.statusBar().showMessage(f"loading {platform} …")
         QtWidgets.QApplication.processEvents()
-        model = load_segment(path, root=self.root, platform=platform)
+        try:
+            model = load_segment(path, root=self.root, platform=platform)
+        except Exception as exc:  # noqa: BLE001 - a bad file must not kill the window
+            # Deliberately broad. A truncated download, a renamed .part, or a
+            # file that is not a segment at all raises from inside zstd or
+            # capnp rather than as an OSError, and a traceback on the console
+            # is not a useful answer to "this one will not open".
+            self.statusBar().showMessage(
+                f"could not read {os.path.basename(os.path.dirname(path))}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return
         kept = model.apply_filter(self._filter)
         self._model = model
         if not kept:

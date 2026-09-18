@@ -113,11 +113,16 @@ class DataScreen(QtWidgets.QWidget):
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
-        # Stretch the name, not the last column: letting "Local size" absorb
-        # the slack spreads a two-word heading across half the window.
+        # Resize modes are set once, per column, and never followed by
+        # resizeColumnsToContents(): that call overrides the modes, which is
+        # why refreshing used to shove every column against the left edge and
+        # leave the rest of the row empty. The name absorbs the slack; the
+        # numbers size to their contents and stay put.
         head = self.table.horizontalHeader()
         head.setStretchLastSection(False)
         head.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        for column in range(1, len(COLUMNS)):
+            head.setSectionResizeMode(column, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.table.itemSelectionChanged.connect(self._show_segments)
         layout.addWidget(self.table, stretch=3)
 
@@ -164,7 +169,12 @@ class DataScreen(QtWidgets.QWidget):
         return rows
 
     def _refill(self) -> None:
+        # Rebuilding the table drops the selection, which would leave the
+        # segment list below showing a platform that is no longer selected --
+        # and, after a delete, segments that no longer exist.
+        previously = set(self.selected_platforms())
         rows = self._rows()
+        self.table.blockSignals(True)
         self.table.setRowCount(len(rows))
         for index, (key, count, gib, local, local_gib) in enumerate(rows):
             cells = (
@@ -181,7 +191,11 @@ class DataScreen(QtWidgets.QWidget):
                         QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
                     )
                 self.table.setItem(index, column, item)
-        self.table.resizeColumnsToContents()
+        self.table.blockSignals(False)
+        for index, row in enumerate(rows):
+            if row[0] in previously:
+                self.table.selectRow(index)
+        self._show_segments()
         self._update_summary()
 
     def _update_summary(self) -> None:

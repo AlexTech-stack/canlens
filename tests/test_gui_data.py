@@ -198,3 +198,102 @@ class TestNavigationBar:
 
     def test_the_segment_list_is_populated_even_though_nothing_is_decoded(self, window):
         assert window.segments.count() == 3
+
+
+class TestColumnWidths:
+    """Refreshing must not shove the columns against the left edge."""
+
+    def test_widths_survive_a_refresh(self, screen, qt_app):
+        screen.show()
+        for _ in range(3):
+            qt_app.processEvents()
+        before = [screen.table.columnWidth(c) for c in range(screen.table.columnCount())]
+        screen.reload()
+        for _ in range(3):
+            qt_app.processEvents()
+        assert [screen.table.columnWidth(c) for c in range(screen.table.columnCount())] == before
+
+    def test_the_columns_fill_the_table(self, screen, qt_app):
+        screen.show()
+        for _ in range(3):
+            qt_app.processEvents()
+        screen.reload()
+        for _ in range(3):
+            qt_app.processEvents()
+        total = sum(screen.table.columnWidth(c) for c in range(screen.table.columnCount()))
+        assert abs(total - screen.table.viewport().width()) <= 2
+
+    def test_the_name_column_takes_the_slack(self, screen, qt_app):
+        screen.show()
+        for _ in range(3):
+            qt_app.processEvents()
+        widths = [screen.table.columnWidth(c) for c in range(screen.table.columnCount())]
+        assert widths[0] > sum(widths[1:])
+
+
+class TestRefreshKeepsContext:
+    def test_the_selected_platform_survives_a_refresh(self, screen):
+        screen.table.selectRow(row_for(screen, "TOYOTA_PRIUS"))
+        screen.reload()
+        assert screen.selected_platforms() == ["TOYOTA_PRIUS"]
+
+    def test_the_segment_list_follows_a_delete(self, screen):
+        from canlens.corpus import delete_segments
+
+        screen.table.selectRow(row_for(screen, "TOYOTA_PRIUS"))
+        assert screen.segments.count() == 2
+        delete_segments(screen.targets_for_delete())
+        screen.reload()
+        # It used to keep listing segments that had just been deleted.
+        assert screen.segments.count() == 0
+
+
+class TestHeatMapFollowsTheCorpus:
+    @pytest.fixture
+    def window(self, qt_app, screen, tmp_path):
+        from canlens.gui.window import Workbench
+
+        view = Workbench(str(tmp_path))
+        yield view
+        view.close()
+
+    def test_deleted_segments_leave_the_heat_map_list(self, window, screen):
+        from canlens.corpus import delete_segments
+
+        before = window.segments.count()
+        screen.table.selectRow(row_for(screen, "TOYOTA_PRIUS"))
+        delete_segments(screen.targets_for_delete())
+        window.data.reload()
+        # Before the fix the list kept them, and opening one raised
+        # FileNotFoundError from deep inside the decoder.
+        assert window.segments.count() == before - 2
+
+    @staticmethod
+    def _on_heat_map(window):
+        from canlens.gui.window import HEAT_MAP_TAB
+
+        # Reach the tab without the tab-change hook opening a segment first.
+        window.screens.blockSignals(True)
+        window.screens.setCurrentIndex(HEAT_MAP_TAB)
+        window.screens.blockSignals(False)
+
+    def test_opening_a_segment_that_is_gone_reports_instead_of_raising(self, window):
+        os.unlink(window._paths[0][1])   # vanished without the Data screen knowing
+        self._on_heat_map(window)
+        window._open_selected(0)
+        assert "no longer on disk" in window.statusBar().currentMessage()
+
+    def test_a_vanished_segment_is_dropped_from_the_list(self, window):
+        before = window.segments.count()
+        os.unlink(window._paths[0][1])
+        self._on_heat_map(window)
+        window._open_selected(0)
+        assert window.segments.count() == before - 1
+
+    def test_a_file_that_is_not_a_segment_reports_instead_of_raising(self, window):
+        # The fixture writes filler bytes, not real zstd. A corrupt or
+        # truncated download raises from inside zstd, which is not an OSError.
+        self._on_heat_map(window)
+        window._open_selected(0)
+        assert "could not read" in window.statusBar().currentMessage()
+        assert window._model is None
