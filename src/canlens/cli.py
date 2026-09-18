@@ -357,22 +357,29 @@ def cmd_cache_clear(args) -> int:
 
 
 def cmd_cache_status(args) -> int:
+    """How much of what is local is cached -- both frames and inference results."""
     from .corpus import inventory
     from .decode import cache_path
     from .decode.cache import CACHE_DIR
+    from .infer.results import results_path
 
     manifest = _manifest(args.root)
     held = inventory(args.root, manifest)
-    total = cached = size = 0
+    total = frames = results = frame_bytes = result_bytes = 0
     for entry in held.values():
         for path in entry.paths:
             total += 1
-            destination = cache_path(args.root, path)
-            if os.path.exists(destination):
-                cached += 1
-                size += os.path.getsize(destination)
+            frame_entry, result_entry = cache_path(args.root, path), results_path(args.root, path)
+            if os.path.exists(frame_entry):
+                frames += 1
+                frame_bytes += os.path.getsize(frame_entry)
+            if os.path.exists(result_entry):
+                results += 1
+                result_bytes += os.path.getsize(result_entry)
     where = os.path.join(args.root, CACHE_DIR)
-    print(f"{cached}/{total} local segments cached, {size / 2**30:.2f} GiB in {where}")
+    print(f"{total} local segments in {where}")
+    print(f"  frames   {frames:>5}/{total}  {frame_bytes / 2**30:.2f} GiB")
+    print(f"  results  {results:>5}/{total}  {result_bytes / 2**20:.0f} MiB")
     return 0
 
 
