@@ -21,7 +21,7 @@ from ..analyze.bits import (
 )
 from ..decode import CanFrame, iter_frames, load_frames
 from ..decode.frameset import FrameSet, Message
-from .checksums import ChecksumHypothesis, find_checksums
+from .checksums import ChecksumHypothesis, find_checksums, find_e2e_crc8
 from .counters import CounterHypothesis, find_counters
 from .crc16 import Crc16Hypothesis, find_crc16
 
@@ -116,20 +116,39 @@ def _build(
     """
     candidates = set(checksum_candidate_bytes(bits))
     crc16_candidates = set(checksum_candidate_bytes(bits, min_rate=CRC16_BYTE_MIN_RATE))
+    counters = find_counters(matrix, **kwargs.get("counter_options", {}))
+    checksums = find_checksums(
+        payloads,
+        address,
+        candidate_bytes=sorted(candidates),
+        matrix=byte_matrix,
+        **kwargs.get("checksum_options", {}),
+    )
+    # The E2E forms need the byte matrix and, for Profile 1 ALT, the alive
+    # counter's parity; they are tried only where the plain forms found nothing.
+    # The matrix is built here when the caller had none, so the object path
+    # and the columnar path cannot disagree about what a message contains.
+    if byte_matrix is None:
+        from .checksums import as_matrix
+
+        byte_matrix = as_matrix(payloads)
+    explained = {c.byte_index for c in checksums}
+    alive = next(((c.start_bit, c.length) for c in counters if c.length == 4), None)
+    checksums += find_e2e_crc8(
+        payloads,
+        address=address,
+        candidate_bytes=sorted(candidates - explained),
+        matrix=byte_matrix,
+        counter=alive,
+    )
     return MessageInference(
         bus=bus,
         address=address,
         width=width,
         frames=matrix.shape[0],
         bits=bits,
-        counters=find_counters(matrix, **kwargs.get("counter_options", {})),
-        checksums=find_checksums(
-            payloads,
-            address,
-            candidate_bytes=sorted(candidates),
-            matrix=byte_matrix,
-            **kwargs.get("checksum_options", {}),
-        ),
+        counters=counters,
+        checksums=checksums,
         # A 16-bit CRC needs two adjacent bytes that both move like noise.
         crc16s=find_crc16(
             payloads,

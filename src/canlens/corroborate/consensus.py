@@ -92,6 +92,7 @@ class CounterConsensus:
     stride: int
     evidence: Evidence
     contested: bool = False
+    modulus: int = 0  # 0 = the natural 2**length
 
     @property
     def end_bit(self) -> int:
@@ -99,8 +100,12 @@ class CounterConsensus:
 
     def __str__(self) -> str:
         step = "" if self.stride == 1 else f" step {self.stride}"
+        wrap = f" mod {self.modulus}" if self.modulus else ""
         flag = " CONTESTED" if self.contested else ""
-        return f"{self.length}-bit counter @ bit {self.start_bit}{step} ({self.evidence}){flag}"
+        return (
+            f"{self.length}-bit counter @ bit {self.start_bit}{step}{wrap} "
+            f"({self.evidence}){flag}"
+        )
 
 
 @dataclass
@@ -109,10 +114,12 @@ class ChecksumConsensus:
     algorithm: str
     evidence: Evidence
     contested: bool = False
+    data_id: int | None = None
 
     def __str__(self) -> str:
         flag = " CONTESTED" if self.contested else ""
-        return f"{self.algorithm} @ byte {self.byte_index} ({self.evidence}){flag}"
+        ident = "" if self.data_id is None else f", data ID 0x{self.data_id:X}"
+        return f"{self.algorithm} @ byte {self.byte_index} ({self.evidence}{ident}){flag}"
 
 
 @dataclass
@@ -288,10 +295,10 @@ def _consolidate(
 
     # Hypotheses: keyed on their full parameters, so two segments that agree
     # on a counter but disagree on its stride count as two hypotheses.
-    counters: dict[tuple[int, int, int], dict[str, list[float]]] = defaultdict(
+    counters: dict[tuple[int, int, int, int], dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
-    checksums: dict[tuple[int, str], dict[str, list[float]]] = defaultdict(
+    checksums: dict[tuple[int, str, int | None], dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
     crc16s: dict[tuple[int, str, str, int | None], dict[str, list[float]]] = defaultdict(
@@ -299,21 +306,25 @@ def _consolidate(
     )
     for device, m in same:
         for ctr in m.counters:
-            counters[(ctr.start_bit, ctr.length, ctr.stride)][device].append(ctr.match_rate)
+            counters[(ctr.start_bit, ctr.length, ctr.stride, ctr.modulus)][device].append(
+                ctr.match_rate
+            )
         for chk in m.checksums:
-            checksums[(chk.byte_index, chk.algorithm)][device].append(chk.match_rate)
+            checksums[(chk.byte_index, chk.algorithm, chk.data_id)][device].append(
+                chk.match_rate
+            )
         for crc in m.crc16s:
             crc16s[(crc.start_byte, crc.algorithm, crc.byteorder, crc.data_id)][device].append(
                 crc.match_rate
             )
 
     counter_out = [
-        CounterConsensus(s, n, stride, _evidence(hits, of_segments, of_devices))
-        for (s, n, stride), hits in counters.items()
+        CounterConsensus(s, n, stride, _evidence(hits, of_segments, of_devices), modulus=mod)
+        for (s, n, stride, mod), hits in counters.items()
     ]
     checksum_out = [
-        ChecksumConsensus(b, algo, _evidence(hits, of_segments, of_devices))
-        for (b, algo), hits in checksums.items()
+        ChecksumConsensus(b, algo, _evidence(hits, of_segments, of_devices), data_id=ident)
+        for (b, algo, ident), hits in checksums.items()
     ]
     crc16_out = [
         Crc16Consensus(b, algo, order, ident, _evidence(hits, of_segments, of_devices))

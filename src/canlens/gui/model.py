@@ -253,19 +253,21 @@ class SegmentModel:
         named = {(s.start_bit, s.length) for s in row.signals}
         out = []
         for counter in row.inference.counters:
+            wrap = f", wraps at {counter.modulus}" if counter.modulus else ""
             out.append(
                 self._derived_entry(
                     index, "Counter", counter.start_bit, counter.length,
-                    f"canlens: counts by {counter.stride} on "
+                    f"canlens: counts by {counter.stride}{wrap} on "
                     f"{counter.match_rate:.1%} of {counter.frames} frames",
                     named,
                 )
             )
         for checksum in row.inference.checksums:
+            ident = "" if checksum.data_id is None else f", data ID 0x{checksum.data_id:X}"
             out.append(
                 self._derived_entry(
                     index, "Checksum", checksum.start_bit, checksum.length,
-                    f"canlens: {checksum.algorithm} reproduces "
+                    f"canlens: {checksum.algorithm}{ident} reproduces "
                     f"{checksum.match_rate:.1%} of {checksum.frames} frames",
                     named,
                 )

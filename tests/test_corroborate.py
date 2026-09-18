@@ -214,3 +214,23 @@ class TestOrdering:
     def test_by_presence_puts_the_commonest_first(self):
         obs = [("a", [message(key=(0, 1)), message(key=(0, 2))]), ("b", [message(key=(0, 1))])]
         assert next(m.key for m in corroborate(obs).by_presence()) == (0, 1)
+
+
+class TestDataIdsAndWraps:
+    def test_checksums_with_different_data_ids_are_different_hypotheses(self):
+        a = ChecksumHypothesis(0, "e2e_p11", 1.0, 100, data_id=0x37)
+        b = ChecksumHypothesis(0, "e2e_p11", 1.0, 100, data_id=0x38)
+        obs = [("x", [message(checksums=[a])]), ("y", [message(checksums=[a])]),
+               ("z", [message(checksums=[b])])]
+        m = corroborate(obs)[(1, 0x210)]
+        assert len(m.checksums) == 2
+        assert m.checksums[0].data_id == 0x37 and m.checksums[0].evidence.segments == 2
+        assert all(s.contested for s in m.checksums)
+        assert "data ID 0x37" in str(m.checksums[0])
+
+    def test_counters_with_different_wraps_are_different_hypotheses(self):
+        obs = [("x", [message(counters=[CounterHypothesis(8, 4, 1, 1.0, 100, modulus=15)])]),
+               ("y", [message(counters=[CounterHypothesis(8, 4, 1, 0.93, 100)])])]
+        m = corroborate(obs)[(1, 0x210)]
+        assert sorted(c.modulus for c in m.counters) == [0, 15]
+        assert "mod 15" in str(next(c for c in m.counters if c.modulus == 15))

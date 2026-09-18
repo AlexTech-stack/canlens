@@ -453,8 +453,8 @@ also have been seen holding at least half its possible values.
 
 **Checksums** are only reported when a named algorithm *reproduces* the byte.
 The library is `sum8`, `sum8_complement`, `xor8`, `toyota`, and CRC-8 with
-polynomials 0x07, 0x1D (SAE J1850), and 0x2F; 16-bit CRCs are searched
-separately (see below). The simplest algorithm that
+polynomials 0x07, 0x1D (SAE J1850), and 0x2F; 16-bit CRCs and the AUTOSAR
+E2E Profile 1/11 form with a solved-for Data ID are searched separately. The simplest algorithm that
 works wins, so a plain sum is never dressed up as a CRC.
 
 `xor8` reports as ambiguous, shown `xor8@?`. XOR is self-inverse: if byte 7 is
@@ -582,17 +582,67 @@ for bus-0 messages is capped at the cars wired to carry it. Aligning buses
 across configurations by address-set overlap is a natural next feature and
 deliberately not done blind.
 
-### An honest gap the layer exposed
+### The gap it exposed, and what closing it found
 
-RIVIAN_R1_GEN1 (20 segments, 19 cars) yields 287 counters and **zero
-checksums against 1,251 checksum-shaped bytes** — bytes whose every bit is
-noisy. Rivian's scheme is outside the 8-bit algorithms and the CRC16 forms
-tested. The next candidates, with the AUTOSAR specs at hand, are E2E
-Profiles 1 and 11 (CRC-8 with a solved-for Data ID, as was done for Profile 5).
+RIVIAN_R1_GEN1 (20 segments, 19 cars) at first yielded 287 counters and
+**zero checksums against 1,251 checksum-shaped bytes**. Adding the AUTOSAR
+E2E Profile 1/11 detector (below) turned that into:
+
+```
+e2e_p11 CRCs: 432 of 540 messages; Data ID == CAN identifier for 431
+tiers: established 392, consistent 40; contested 0
+counters: 432 x (4 bits, wraps at 15); contested 0
+```
+
+**Rivian's Data ID is the CAN identifier itself**, fed low byte then high
+byte — Profile 11 `DATAID_BOTH`. 431 of 432 messages obey it; the exception
+is `bus 5 0x31A` with Data ID 0x84, established across four cars, and worth
+a look. That rule was not assumed: the detector tries the identifier form
+first and claims it only when the recovered byte comes out equal to
+`addr & 0xFF`.
+
+### E2E Profiles 1 and 11: a CRC-8 over a Data ID that is never sent
+
+Per AUTOSAR_PRS_E2EProtocol the CRC is SAE J1850 (0x1D) computed first over
+the Data ID bytes — low then high for `BOTH`, low then a zero byte for
+`NIBBLE` — and then over every byte but the CRC ([PRS_E2E_00082],
+[PRS_E2E_00505], [PRS_E2E_00506]). The Data ID is solved for: the register
+after the ID bytes takes one of 256 values, so every candidate is scored on a
+sample of frames at once and the one that fits is verified on all of them.
+
+Two honest limits. **One trace cannot tell the single-state modes apart** —
+NIBBLE, BOTH and LOW each map 256 IDs onto the same 256 register states, so
+whichever the sender used, exactly one ID in every mode fits. They are one
+hypothesis, `e2e_p11`, with `p01_low_id()` giving the Profile 1 LOW reading.
+Only the identifier form (checkable against the address) and ALT (two states
+alternating with counter parity) are individually falsifiable.
+
+**The final XOR was settled by data, not by the flowchart.** The CRC library
+XORs 0xFF on output and a first reading of the spec suggested the same. But a
+final XOR is absorbed into an equivalent start state for any *fixed* length,
+so one message cannot tell — only structure across messages of different
+lengths can. On 94 Rivian messages of three widths, register-from-0x00 with
+no final XOR recovers the CAN identifier for all 94; every other convention
+yields noise. The detector uses what the wire showed.
+
+### The alive counter my detector rejected
+
+E2E alive counters run **0..14** in four bits — 0x0F is reserved
+([PRS_E2E_00504], `Counter %= 15`). Under a natural modulus of 16 the 14→0
+wrap is one odd step per cycle: fourteen good steps in fifteen is 93.3%,
+just under the 95% bar, and the same wrap skips one LSB flip so the exact
+prefilter rejected it too. The most standard counter in automotive was
+invisible by construction. Counters may now wrap below 2^length, reported as
+`4-bit counter @ bit 8 mod 15`, with two guards: the only early wrap tried is
+the one the data's maximum implies, and it is admitted only if it uses the
+field's top bit — otherwise a 6-bit window over two constant zero bits fits
+mod 15 perfectly and would claim padding as counter.
 
 Corroboration reads the inference results cache, so a platform pass costs
 milliseconds per segment once `cache build` has run: 11 EV6 segments in
-0.7 s.
+0.7 s. Building that cache is dearer for a platform where most messages are
+E2E-protected, since each is a solved search; the results are versioned
+(`INFER_VERSION`) and rebuilt when the detectors change.
 
 ## 8. From Python
 

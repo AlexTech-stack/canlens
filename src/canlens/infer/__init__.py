@@ -8,7 +8,15 @@ the trace rather than guessed at from how a bit looks. Corroborating a finding
 across many traces is :mod:`canlens.corroborate`'s job.
 """
 
-from .checksums import ALGORITHMS, ChecksumHypothesis, find_checksums, score_algorithm
+from .checksums import (
+    ALGORITHMS,
+    ChecksumHypothesis,
+    e2e_crc8,
+    find_checksums,
+    find_e2e_crc8,
+    p01_low_id,
+    score_algorithm,
+)
 from .counters import (
     CounterHypothesis,
     field_values,
@@ -45,17 +53,20 @@ __all__ = [
     "checksum_candidate_bytes",
     "clear_results",
     "crc16_autosar",
+    "e2e_crc8",
     "e2e_p05",
     "field_values",
     "find_checksums",
     "find_counters",
     "find_crc16",
+    "find_e2e_crc8",
     "infer_cached",
     "infer_frames",
     "infer_frameset",
     "infer_message",
     "infer_message_columnar",
     "infer_segment",
+    "p01_low_id",
     "score_algorithm",
     "score_counter",
     "solve_data_id",

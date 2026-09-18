@@ -164,6 +164,9 @@ class ChecksumHypothesis:
     algorithm: str
     match_rate: float
     frames: int
+    # Set for the AUTOSAR E2E Profile 1/11 forms, whose CRC covers an implicit
+    # Data ID that never appears on the wire and is solved for instead.
+    data_id: int | None = None
     # Some algorithms are self-inverse: if byte 7 is the XOR of bytes 0-6 then
     # byte 0 is equally the XOR of bytes 1-7, so every position "verifies" and
     # the trace alone cannot say which byte the protocol calls the checksum.
@@ -187,7 +190,8 @@ class ChecksumHypothesis:
             if self.ambiguous
             else f"byte {self.byte_index}"
         )
-        return f"{self.algorithm} @ {where} ({self.match_rate:.1%})"
+        ident = "" if self.data_id is None else f", data ID 0x{self.data_id:X}"
+        return f"{self.algorithm} @ {where} ({self.match_rate:.1%}{ident})"
 
 
 def score_algorithm(
@@ -266,3 +270,182 @@ def find_checksums(
                                ambiguous_positions=indices if len(indices) > 1 else ())
         )
     return sorted(found, key=lambda f: f.byte_index)
+
+
+# ---------------------------------------------------------------------------
+# AUTOSAR E2E Profiles 1 and 11: CRC-8 SAE J1850 over an implicit Data ID.
+#
+# Per AUTOSAR_PRS_E2EProtocol (FO R19-11): [PRS_E2E_00082] the CRC is computed
+# first over the Data ID bytes and then over every transmitted byte except the
+# CRC byte; [PRS_E2E_00505] mode BOTH feeds the Data ID low byte then its high
+# byte; [PRS_E2E_00506] mode NIBBLE feeds the low byte then a zero byte (the
+# high nibble travels in the data, where the CRC covers it as data);
+# [PRS_E2E_00163] Profile 1 additionally allows LOW (low byte only) and ALT
+# (low byte for even counters, high byte for odd). Every call in the flowcharts
+# is Crc_CalculateCRC8(..., Crc_StartValue8: 0xFF, Crc_IsFirstCall: FALSE),
+# which under the R4 CRC library puts the register at 0x00 to begin with.
+#
+# The final XOR is settled by data, not by the flowchart. The library applies
+# 0xFF on output, and a first reading of the spec suggested the same here; but
+# for a fixed-length message a final XOR is absorbed into an equivalent start
+# state, so a single message cannot tell -- only structure across messages of
+# *different* lengths can. On a vehicle with 94 such messages of three widths,
+# the register-from-0x00, no-final-XOR convention with the Data ID fed as
+# [addr & 0xFF, addr >> 8] recovers the CAN identifier as the Data ID for all
+# 94; every other convention yields noise. That is the convention used.
+#
+# The Data ID is never on the wire. It is solved for: the register after the ID
+# bytes can only take 256 values, so every single-byte mode is a 256-way search
+# vectorised over all frames, and a real ID reproduces the CRC on every frame
+# where a coincidence reproduces it on one.
+
+E2E_XOR = 0x00
+J1850_TABLE = _crc8_table(0x1D)
+
+
+def e2e_crc8(payload: bytes, index: int, id_bytes: bytes) -> int:
+    """Scalar reference for the Profile 1/11 CRC. `id_bytes` is the Data ID
+    as fed: [low], [low, high], or [low, 0x00]."""
+    crc = 0
+    for byte in id_bytes + _others(payload, index):
+        crc = int(J1850_TABLE[crc ^ byte])
+    return crc ^ E2E_XOR
+
+
+def _e2e_over_data(state: np.ndarray, matrix: np.ndarray, index: int) -> np.ndarray:
+    """Run `state` (256, n) through every data column but `index`, then XOR out."""
+    for column in range(matrix.shape[1]):
+        if column == index:
+            continue
+        state = J1850_TABLE[state ^ matrix[None, :, column]]
+    return state ^ np.uint8(E2E_XOR)
+
+
+def _e2e_candidates(matrix: np.ndarray, index: int, second: int | None) -> np.ndarray:
+    """(256, n) CRC for every Data ID low byte, optionally followed by `second`."""
+    low = np.arange(256, dtype=np.uint8)
+    state = np.repeat(J1850_TABLE[low][:, None], matrix.shape[0], axis=1)
+    if second is not None:
+        state = J1850_TABLE[state ^ np.uint8(second)]
+    return _e2e_over_data(state, matrix, index)
+
+
+def _e2e_single(blob: np.ndarray, index: int, low: int, second: int | None) -> np.ndarray:
+    """(n,) CRC for one Data ID low byte, optionally followed by `second`."""
+    state = np.full((1, blob.shape[0]), J1850_TABLE[low], dtype=np.uint8)
+    if second is not None:
+        state = J1850_TABLE[state ^ np.uint8(second)]
+    return _e2e_over_data(state, blob, index)[0]
+
+
+def _best_e2e(
+    blob: np.ndarray, sample: np.ndarray, index: int, second: int | None, min_match: float
+) -> tuple[int, float] | None:
+    """The one Data ID low byte worth verifying, and its rate over every frame.
+
+    All 256 candidates are scored on the sample only. A true Data ID reproduces
+    the whole trace, so it reproduces the sample, so it is the sample's argmax;
+    verifying that single candidate on every frame is therefore exact, and it
+    costs one pass instead of 256 -- which is what took a Rivian segment with
+    159 protected messages from 5 s to well under one.
+    """
+    screened = (_e2e_candidates(sample, index, second) == sample[None, :, index]).mean(axis=1)
+    best = int(screened.argmax())
+    if screened[best] < min_match:
+        return None
+    rate = float((_e2e_single(blob, index, best, second) == blob[:, index]).mean())
+    return (best, rate) if rate >= min_match else None
+
+
+def find_e2e_crc8(
+    payloads: Sequence[bytes],
+    *,
+    address: int | None = None,
+    candidate_bytes: Sequence[int] | None = None,
+    min_match: float = 0.99,
+    matrix: np.ndarray | None = None,
+    counter: tuple[int, int] | None = None,
+    screen_frames: int = 64,
+) -> list[ChecksumHypothesis]:
+    """Find a Profile 1/11 CRC byte and recover its Data ID.
+
+    One trace cannot tell the single-state modes apart. The register after the
+    Data ID bytes takes one of 256 values, and each of NIBBLE, BOTH and LOW
+    maps 256 Data IDs onto those 256 states bijectively -- so whichever mode
+    the sender used, exactly one Data ID in *every* mode reproduces the CRC.
+    They are therefore reported as one hypothesis, `e2e_p11`, with the Data ID
+    under the [low, 0x00] convention shared by Profile 11 NIBBLE and BOTH with
+    a zero high byte; `p01_low_id` converts it to the Profile 1 LOW reading.
+    ALT is different: it alternates between two states by counter parity, so
+    no single state fits, and it is falsifiable -- which is why the alive
+    counter found earlier is passed in.
+
+    One form *is* checkable from a single message: BOTH with the Data ID equal
+    to the CAN identifier, fed as [addr & 0xFF, addr >> 8]. That is tried
+    first, and claimed only when the recovered low byte comes out equal to
+    addr & 0xFF -- a 1-in-256 coincidence otherwise, which corroboration
+    across segments then settles. The reported `data_id` is the full
+    identifier in that case.
+    """
+    blob = as_matrix(payloads) if matrix is None else matrix
+    frames, width = blob.shape
+    if frames < 8 or width < 2:
+        return []
+    positions = candidate_bytes if candidate_bytes is not None else range(width)
+    sample = blob[:screen_frames]
+    found = []
+    for index in positions:
+        if not 0 <= index < width:
+            continue
+        hit = None
+        if address is not None:
+            got = _best_e2e(blob, sample, index, (address >> 8) & 0xFF, min_match)
+            if got is not None and got[0] == (address & 0xFF):
+                hit = ChecksumHypothesis(index, "e2e_p11", got[1], frames, data_id=address)
+        if hit is None:
+            got = _best_e2e(blob, sample, index, 0x00, min_match)
+            if got is not None:
+                hit = ChecksumHypothesis(index, "e2e_p11", got[1], frames, data_id=got[0])
+        if hit is not None:
+            found.append(hit)
+        elif counter is not None:
+            hit = _e2e_alt(blob, index, counter, min_match)
+            if hit is not None:
+                found.append(hit)
+    return found
+
+
+def p01_low_id(data_id: int) -> int:
+    """The Profile 1 LOW-mode Data ID equivalent to an `e2e_p11` one.
+
+    [low, 0x00] and [low'] leave the register in the same state for exactly
+    one low'; this finds it. The two readings are the same wire behaviour.
+    """
+    state = int(J1850_TABLE[J1850_TABLE[data_id & 0xFF] ^ 0])
+    return int(np.flatnonzero(J1850_TABLE == state)[0])
+
+
+def _e2e_alt(
+    blob: np.ndarray, index: int, counter: tuple[int, int], min_match: float
+) -> ChecksumHypothesis | None:
+    """Profile 1 ALT: low byte on even counters, high byte on odd ones."""
+    from ..analyze.bits import BitOrder, bit_matrix_from_bytes
+    from .counters import field_values
+
+    bits = bit_matrix_from_bytes(blob, BitOrder.INTEL)
+    parity = field_values(bits, counter[0], counter[1]) & 1
+    ids = []
+    for wanted in (0, 1):
+        rows = np.flatnonzero(parity == wanted)
+        if rows.size < 4:
+            return None
+        rate = (_e2e_candidates(blob[rows], index, None) == blob[None, rows, index]).mean(axis=1)
+        if rate.max() < min_match:
+            return None
+        ids.append(int(rate.argmax()))
+    low, high = ids
+    total = (_e2e_candidates(blob, index, None)[np.where(parity == 0, low, high), np.arange(blob.shape[0])]
+             == blob[:, index]).mean()
+    return ChecksumHypothesis(
+        index, "e2e_p01_alt", float(total), blob.shape[0], data_id=low | (high << 8)
+    )
