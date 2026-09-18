@@ -460,6 +460,32 @@ byte 0.
 pip install -e ".[gui]" && canlens gui
 ```
 
+Two screens, chosen from the tabs along the top.
+
+### Data — the landing screen
+
+Everything `canlens corpus` does, plus deletion:
+
+- every platform with its upstream size and what is held locally, holdings
+  first, filtered by the same `*`/`?` wildcards (`TOYOTA*`, `*EV6`)
+- **Fetch** downloads the selected platforms, capped by the segment spinner,
+  on a worker thread with a progress bar and a working **Cancel** — the
+  queued work stops and transfers already in flight finish rather than
+  leaving `.part` files behind
+- **Delete local** removes what is selected, after a confirmation naming the
+  count and the space it frees. Selected *segments* win over the selected
+  platform, so a handful can be dropped without emptying the car
+- double-click a local segment to open it in the heat map
+
+A fetch is refused outright if the estimate exceeds free disk, rather than
+filling the disk and failing partway.
+
+Nothing is decoded until the heat map is actually opened. Selecting a row is
+not a request to decode it — that distinction is worth a few seconds of
+startup and one avoided schema fetch.
+
+### Heat Map
+
 Everything the CLI prints, arranged for the reverse-engineering loop:
 
 - **left** — every locally fetched segment, labelled by platform

@@ -307,6 +307,38 @@ def cmd_gui(args) -> int:
     return run(args.root)
 
 
+def cmd_corpus_delete(args) -> int:
+    from .corpus import delete_segments, inventory
+
+    manifest = _manifest(args.root)
+    held = inventory(args.root, manifest)
+    targets: list[str] = []
+    for name in args.platform:
+        entry = held.get(name)
+        if entry is None:
+            print(f"canlens: nothing local for {name}", file=sys.stderr)
+            continue
+        targets += entry.paths[: args.limit] if args.limit else entry.paths
+    if not targets:
+        print("canlens: nothing to delete", file=sys.stderr)
+        return 1
+
+    size = sum(os.path.getsize(p) for p in targets if os.path.exists(p))
+    print(f"{len(targets)} segments, {size / 2**30:.2f} GiB, under {args.root}")
+    if not args.yes:
+        # Deleting fetched data is cheap to undo -- it can be fetched again --
+        # but it is never what someone wanted by accident.
+        reply = input("delete these? [y/N] ").strip().lower()
+        if reply not in ("y", "yes"):
+            print("cancelled")
+            return 1
+    result = delete_segments(targets)
+    print(f"deleted {result.deleted} segments, freed {result.bytes_freed / 2**30:.2f} GiB")
+    for failure in result.failed:
+        print(f"  failed: {failure}", file=sys.stderr)
+    return 0 if result.ok else 1
+
+
 def cmd_corpus_which(args) -> int:
     manifest = _manifest(args.root)
     for path in args.path:
@@ -344,6 +376,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = ops.add_parser("status", help="report how much of the corpus is local")
     p.set_defaults(func=cmd_status)
+
+    p = ops.add_parser("delete", help="remove locally stored segments")
+    p.add_argument("platform", nargs="+", help="platform key(s); see 'canlens corpus list'")
+    p.add_argument("--limit", type=int, help="delete at most this many per platform")
+    p.add_argument("--yes", action="store_true", help="do not ask for confirmation")
+    p.set_defaults(func=cmd_corpus_delete)
 
     p = ops.add_parser("which", help="say which platform a segment path belongs to")
     p.add_argument("path", nargs="+", help="segment path(s) or IDs")

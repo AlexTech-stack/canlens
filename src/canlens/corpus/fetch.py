@@ -14,7 +14,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 from .manifest import Manifest, segment_relpath, segment_url
@@ -26,10 +26,11 @@ class FetchResult:
     skipped: int = 0
     failed: int = 0
     bytes_new: int = 0
+    cancelled: bool = False
 
     @property
     def ok(self) -> bool:
-        return self.failed == 0
+        return self.failed == 0 and not self.cancelled
 
 
 def segment_dest(out_dir: str, segment_id: str) -> str:
@@ -80,12 +81,25 @@ def fetch_all(
     *,
     jobs: int = 8,
     progress=None,
+    should_stop=None,
+    report_every: int = 50,
 ) -> FetchResult:
-    """Fetch every segment into `out_dir`, `jobs` at a time."""
+    """Fetch every segment into `out_dir`, `jobs` at a time.
+
+    `should_stop` is polled as results arrive; when it returns true the queued
+    work is cancelled and whatever has already been fetched is kept. Transfers
+    already in flight finish normally rather than leaving `.part` files
+    behind. Results are collected as they complete rather than in submission
+    order, since nothing downstream depends on the order and stopping early
+    depends on not waiting for a slow transfer at the head of the queue.
+    """
     result = FetchResult()
     done = 0
+    total = len(segments)
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        for path_or_err, written in pool.map(lambda s: fetch_one(s, out_dir), segments):
+        futures = {pool.submit(fetch_one, segment, out_dir): segment for segment in segments}
+        for future in as_completed(futures):
+            path_or_err, written = future.result()
             if written < 0:
                 result.failed += 1
                 print(f"  failed: {path_or_err}", file=sys.stderr)
@@ -95,6 +109,11 @@ def fetch_all(
                 result.fetched += 1
                 result.bytes_new += written
             done += 1
-            if progress and (done % 50 == 0 or done == len(segments)):
-                progress(done, len(segments), result)
+            if progress and (done % report_every == 0 or done == total):
+                progress(done, total, result)
+            if should_stop is not None and should_stop():
+                result.cancelled = True
+                for pending in futures:
+                    pending.cancel()
+                break
     return result

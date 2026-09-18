@@ -65,6 +65,10 @@ class Manifest:
     def __len__(self) -> int:
         return len(self._platforms)
 
+    def __iter__(self):
+        """Platform keys, so a Manifest reads like the mapping it is."""
+        return iter(self._platforms)
+
     def keys(self) -> list[str]:
         return list(self._platforms)
 

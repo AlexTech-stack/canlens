@@ -20,6 +20,7 @@ from ..corpus import Manifest, segment_dest
 from ..export import save_pdu_db
 from ..filters import TraceFilter
 from .axes import bus_ticks, byte_ticks
+from .data import DataScreen
 from .model import SegmentModel, load_segment
 from .palette import BACKGROUND, CHECKSUM_RGBA, COUNTER_RGBA, NAMED_RGBA, lookup_table
 
@@ -43,6 +44,10 @@ LABEL_TOP = -0.30
 STRIP_TOP = 1.15
 STRIP_BOTTOM_MARGIN = 0.2
 AXIS_FALLBACK_PX = 34
+
+# Screen order in the navigation bar.
+DATA_TAB = 0
+HEAT_MAP_TAB = 1
 
 
 class BitMatrixView(pg.PlotWidget):
@@ -484,20 +489,41 @@ class Workbench(QtWidgets.QMainWindow):
         split.addWidget(self.segments)
         split.addWidget(right)
         split.setSizes([340, 1100])
-        self.setCentralWidget(split)
 
-        bar = self.addToolBar("actions")
-        bar.addWidget(QtWidgets.QLabel("  filter  "))
+        # Filter and export belong to the heat map, not to the window: shown
+        # on a toolbar they would sit above the Data screen doing nothing.
+        header = QtWidgets.QHBoxLayout()
+        header.addWidget(QtWidgets.QLabel("filter"))
         self.filter_field = QtWidgets.QLineEdit()
-        self.filter_field.setPlaceholderText("vehicle,segment,bus,can id   e.g. TOYOTA_PRIUS,*,CAN0,0x2*")
-        self.filter_field.setMinimumWidth(420)
+        self.filter_field.setPlaceholderText(
+            "vehicle,segment,bus,can id   e.g. TOYOTA_PRIUS,*,CAN0,0x2*"
+        )
         self.filter_field.returnPressed.connect(self._apply_filter)
-        bar.addWidget(self.filter_field)
-        clear = bar.addAction("Clear")
-        clear.triggered.connect(self._clear_filter)
-        bar.addSeparator()
-        export = bar.addAction("Export PDU database…")
-        export.triggered.connect(self._export)
+        header.addWidget(self.filter_field, stretch=1)
+        clear = QtWidgets.QPushButton("Clear")
+        clear.clicked.connect(self._clear_filter)
+        header.addWidget(clear)
+        self.export_button = QtWidgets.QPushButton("Export PDU database…")
+        self.export_button.clicked.connect(self._export)
+        header.addWidget(self.export_button)
+
+        heat_map = QtWidgets.QWidget()
+        heat_layout = QtWidgets.QVBoxLayout(heat_map)
+        heat_layout.setContentsMargins(6, 6, 6, 0)
+        heat_layout.addLayout(header)
+        heat_layout.addWidget(split, stretch=1)
+
+        self.data = DataScreen(root, self.manifest)
+        self.data.open_segment.connect(self.open_in_heat_map)
+
+        # The nav bar. Data leads because the first question on a fresh
+        # machine is what is on disk, not what is in a trace.
+        self.screens = QtWidgets.QTabWidget()
+        self.screens.addTab(self.data, "Data")
+        self.screens.addTab(heat_map, "Heat Map")
+        self.screens.setCurrentIndex(DATA_TAB)
+        self.screens.currentChanged.connect(self._on_screen_changed)
+        self.setCentralWidget(self.screens)
 
         self.statusBar().showMessage("ready")
 
@@ -538,11 +564,16 @@ class Workbench(QtWidgets.QMainWindow):
             return
         wanted = next((i for i, (_, p) in enumerate(self._paths) if p == keep), 0)
         self.segments.setCurrentRow(wanted)
-        if wanted == self.segments.currentRow():
-            self._open_selected(wanted)
+        self._open_selected(wanted)
 
     def _open_selected(self, index: int) -> None:
         if not (0 <= index < len(self._paths)):
+            return
+        # Selecting a row is not a request to decode it. Data is the landing
+        # screen, and setCurrentRow fires this through currentRowChanged, so
+        # without this guard merely listing segments decodes one -- seconds of
+        # work plus a schema fetch, for a screen nobody has opened.
+        if self.screens.currentIndex() != HEAT_MAP_TAB:
             return
         platform, path = self._paths[index]
         self.statusBar().showMessage(f"loading {platform} …")
@@ -562,6 +593,30 @@ class Workbench(QtWidgets.QMainWindow):
             f"{platform}  —  {kept} messages, {model.profile.frames} frames, "
             f"{model.bit_width} bits wide{suffix}"
         )
+
+    def _on_screen_changed(self, index: int) -> None:
+        """Decode the selected segment the first time the heat map is shown."""
+        if index == HEAT_MAP_TAB and self._model is None:
+            self._open_selected(self.segments.currentRow())
+
+    def open_in_heat_map(self, path: str) -> None:
+        """Show a segment chosen on the Data screen, switching to the map."""
+        index = next((i for i, (_, p) in enumerate(self._paths) if p == path), None)
+        if index is None:
+            # Hidden by the heat map's own filter; clear it rather than
+            # silently doing nothing to a double-click.
+            self.filter_field.clear()
+            self._filter = TraceFilter()
+            self._list_segments(keep=path)
+            index = next((i for i, (_, p) in enumerate(self._paths) if p == path), None)
+        if index is None:
+            self.statusBar().showMessage(f"{path} is not in the segment list")
+            return
+        # Switch first: _open_selected declines to decode while another
+        # screen is in front.
+        self.screens.setCurrentIndex(HEAT_MAP_TAB)
+        self.segments.setCurrentRow(index)
+        self._open_selected(index)
 
     def _apply_filter(self) -> None:
         try:
