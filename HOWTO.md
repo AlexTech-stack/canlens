@@ -399,10 +399,10 @@ canlens infer trace <segment>/rlog.zst
 
 message        frames  counters                           checksums
 bus 0 0x024      4984  -                                  toyota@7 100%
-bus 1 0x210      1200  8b@0 100%                          toyota@7 100%
+bus 1 0x210      1200  8bit@0 100%                        toyota@7 100%
 ```
 
-`8b@0` is an 8-bit counter starting at bit 0; a `/n` suffix marks a step other
+`8bit@0` is an 8-bit counter starting at bit 0; a `/n` suffix marks a step other
 than 1. Percentages are the fraction of the trace the hypothesis reproduces —
 they are the whole point, and a finding below 100% deserves a look.
 
@@ -449,7 +449,12 @@ filters enforce that. The step must be coprime with the field width — without
 it, a single toggling bit at the top of an n-bit window is a mathematically
 perfect counter of step 2^(n-1) that only ever holds two values, and every
 even step on a power-of-two field is a version of that mistake. The field must
-also have been seen holding at least half its possible values.
+also have been seen holding at least half its possible values. A third filter
+runs after the checksum search: a counter is never reported inside a byte a
+checksum explains. A CRC is linear, so when nothing else in the message moves
+the CRC byte is an affine image of the alive counter, and two of its bits walk
+0..3 as convincingly as a real counter — every Jeep Grand Cherokee message with
+a J1850 CRC showed such a phantom 2-bit counter before this was added.
 
 **Checksums** are only reported when a named algorithm *reproduces* the byte.
 The library is `sum8`, `sum8_complement`, `xor8`, `toyota`, and CRC-8 with

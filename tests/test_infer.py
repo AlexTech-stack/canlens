@@ -328,3 +328,36 @@ class TestVectorisedMatchesScalar:
         scalar = [e2e_p05(bytes(row), 0, 0x0A5F) for row in matrix]
         assert appended.tolist() == scalar
         assert crc16_update(0xFFFF, b"") == 0xFFFF
+
+
+class TestCountersInsideChecksums:
+    """A CRC of a counter is an affine image of it and can mimic a small counter."""
+
+    @staticmethod
+    def payloads(n: int = 512) -> list[bytes]:
+        crc = ALGORITHMS["crc8_j1850"]
+        out = []
+        for i in range(n):
+            frame = bytes([0x10, 0x20, 0x30, 0x40, 0x50, 0x60, i % 16, 0])
+            out.append(frame[:7] + bytes([crc(frame, 0x123, 7)]))
+        return out
+
+    def test_the_crc_byte_is_not_also_a_counter(self):
+        payloads = self.payloads()
+        raw = find_counters(matrix_of(payloads))
+        # The scan alone does see something counting inside the CRC byte.
+        assert any(c.start_bit // 8 == 7 for c in raw), [str(c) for c in raw]
+        found = infer_message(payloads, bus=0, address=0x123)
+        assert [c.byte_index for c in found.checksums] == [7]
+        assert [(c.start_bit, c.length) for c in found.counters] == [(48, 4)]
+
+    def test_a_counter_next_to_the_crc_survives(self):
+        from canlens.infer.checksums import ChecksumHypothesis
+        from canlens.infer.counters import CounterHypothesis
+        from canlens.infer.message import outside_checksums
+
+        keep = CounterHypothesis(start_bit=48, length=4, stride=1, match_rate=1.0, frames=10)
+        drop = CounterHypothesis(start_bit=62, length=2, stride=1, match_rate=1.0, frames=10)
+        spans = CounterHypothesis(start_bit=52, length=8, stride=1, match_rate=1.0, frames=10)
+        crc = ChecksumHypothesis(byte_index=7, algorithm="crc8_j1850", match_rate=1.0, frames=10)
+        assert outside_checksums([keep, drop, spans], [crc], []) == [keep]

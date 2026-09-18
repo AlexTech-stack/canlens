@@ -151,23 +151,49 @@ def _build(
         byte_matrix, counters, candidate_bytes=sorted(candidates - explained)
     )
     checksums += eight
+    # A 16-bit CRC needs two adjacent bytes that both move like noise.
+    crc16s = find_crc16(
+        payloads,
+        candidate_bytes=[s for s in crc16_candidates if s + 1 in crc16_candidates],
+        matrix=byte_matrix,
+        **kwargs.get("crc16_options", {}),
+    ) + wider
     return MessageInference(
         bus=bus,
         address=address,
         width=width,
         frames=matrix.shape[0],
         bits=bits,
-        counters=counters,
+        counters=outside_checksums(counters, checksums, crc16s),
         checksums=checksums,
-        # A 16-bit CRC needs two adjacent bytes that both move like noise.
-        crc16s=find_crc16(
-            payloads,
-            candidate_bytes=[s for s in crc16_candidates if s + 1 in crc16_candidates],
-            matrix=byte_matrix,
-            **kwargs.get("crc16_options", {}),
-        )
-        + wider,
+        crc16s=crc16s,
     )
+
+
+def outside_checksums(
+    counters: list[CounterHypothesis],
+    checksums: Sequence[ChecksumHypothesis],
+    crc16s: Sequence[Crc16Hypothesis],
+) -> list[CounterHypothesis]:
+    """Drop counters that live inside a byte a checksum already explains.
+
+    A CRC is linear over GF(2), so when the only thing moving in a message is
+    its alive counter the CRC byte is an affine image of that counter -- and
+    two of its bits can walk 0..3 as faithfully as any real counter. Every
+    Jeep Grand Cherokee message with a J1850 CRC showed a phantom 2-bit
+    counter in the CRC byte for exactly this reason. The counter scan cannot
+    tell the two apart, but once the byte is known to be a checksum it is
+    not also a counter. The unfiltered list still feeds the E2E searches
+    above, which only ever read the 4-bit alive counter.
+    """
+    explained: set[int] = {c.byte_index for c in checksums}
+    for crc in crc16s:
+        explained.update(range(crc.start_byte, crc.start_byte + crc.nbytes))
+    return [
+        c
+        for c in counters
+        if not explained & set(range(c.start_bit // 8, (c.start_bit + c.length - 1) // 8 + 1))
+    ]
 
 
 def infer_message_columnar(
