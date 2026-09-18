@@ -79,7 +79,8 @@ class TestViewsPinLevels:
         from canlens.gui import window
 
         source = inspect.getsource(window)
-        assert source.count("levels=(0, 255)") == 2
+        # Matrix, strip, and the per-value layout rows.
+        assert source.count("levels=(0, 255)") == 3
 
 
 class TestBitSelection:

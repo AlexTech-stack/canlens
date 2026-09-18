@@ -466,3 +466,53 @@ class TestModelFiltering:
         # Row 0 is now a different message; a stale cache would return the old one.
         assert m.rows[0].address == 0x200
         assert m.matrix_for(0).shape == first.shape
+
+
+class TestLayouts:
+    """Per-selector-value bit classes of a multiplexed message."""
+
+    @pytest.fixture
+    def model(self):
+        from canlens.infer import MessageInference
+        from canlens.infer.multiplex import MultiplexHypothesis
+
+        slices = (b"1C4RJFJ", b"T7LC163", b"7634\x00\x00\x00")
+        payloads = [bytes([i % 3]) + slices[i % 3] for i in range(300)]
+        r = row((0, 0x3E0), [0] * 64)
+        r.inference = MessageInference(
+            bus=0, address=0x3E0, width=8, frames=300, bits=None,  # type: ignore[arg-type]
+            multiplexor=MultiplexHypothesis(0, 8, (0, 1, 2), (100, 100, 100), tuple(range(8, 64)), 300),
+        )
+        return SegmentModel("p", "r", None, None, [r], payloads={(0, 0x3E0): payloads})
+
+    def test_one_layout_per_value_over_that_values_frames(self, model):
+        layouts = model.layouts(0)
+        assert [(value, frames) for value, frames, _ in layouts] == [(0, 100), (1, 100), (2, 100)]
+        # Each slice is constant once the frames are split by the selector.
+        for _value, _frames, kinds in layouts:
+            assert kinds.shape == (64,)
+            assert set(kinds.tolist()) == {KIND_INDEX[BitKind.CONSTANT]}
+
+    def test_a_row_without_a_multiplexor_has_no_layouts(self):
+        r = row((1, 0x210), [0] * 64)
+        assert SegmentModel("p", "r", None, None, [r], payloads={(1, 0x210): [bytes(8)] * 10}).layouts(0) == []
+
+    def test_a_signal_present_under_one_value_only(self):
+        import random
+
+        from canlens.infer import MessageInference
+        from canlens.infer.multiplex import MultiplexHypothesis
+
+        rng = random.Random(1)
+        payloads = [
+            bytes([i % 2, rng.randrange(256) if i % 2 == 0 else 0x55]) + bytes(6) for i in range(400)
+        ]
+        r = row((0, 0x100), [0] * 64)
+        r.inference = MessageInference(
+            bus=0, address=0x100, width=8, frames=400, bits=None,  # type: ignore[arg-type]
+            multiplexor=MultiplexHypothesis(0, 8, (0, 1), (200, 200), tuple(range(8, 16)), 400),
+        )
+        model = SegmentModel("p", "r", None, None, [r], payloads={(0, 0x100): payloads})
+        under_0, under_1 = model.layouts(0)
+        assert all(k != KIND_INDEX[BitKind.CONSTANT] for k in under_0[2][8:16])
+        assert all(k == KIND_INDEX[BitKind.CONSTANT] for k in under_1[2][8:16])

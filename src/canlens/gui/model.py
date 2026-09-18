@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..analyze import TraceProfile, analyze_frameset
-from ..analyze.bits import BitOrder, bit_matrix
+from ..analyze.bits import BitOrder, bit_entropy, bit_matrix, classify_bits, transition_rate
 from ..decode import load_frames
 from ..export import MessageEntry, SignalEntry
 from ..filters import TraceFilter
@@ -158,6 +158,30 @@ class SegmentModel:
         matrix = bit_matrix(self.payloads.get(row.key, []), row.width, BitOrder.INTEL)
         self._matrix_cache = (index, matrix)
         return matrix
+
+    def layouts(self, index: int) -> list[tuple[int, int, np.ndarray]]:
+        """(selector value, frames, bit classes) per value of a multiplexed row.
+
+        The row's own classes describe the message as a whole, and for a
+        multiplexed message that is the wrong question: a byte that is
+        constant under every selector value but different in each looks
+        busy, and a signal present under one value only looks slow. Each
+        layout here is classified over that value's frames alone, so it
+        reads exactly as the whole-message strip would if the message were
+        not multiplexed. Empty when the row has no multiplexor.
+        """
+        row = self.rows[index]
+        mux = row.inference.multiplexor if row.inference is not None else None
+        matrix = self.matrix_for(index)
+        if mux is None or matrix.size == 0 or mux.end_bit > matrix.shape[1]:
+            return []
+        selector = field_values(matrix, mux.start_bit, mux.length)
+        out = []
+        for value in mux.values:
+            frames = matrix[selector == value]
+            kinds = classify_bits(transition_rate(frames), bit_entropy(frames))
+            out.append((value, int(frames.shape[0]), kinds_to_indices(kinds)))
+        return out
 
     def field_series(self, index: int, start: int, length: int) -> np.ndarray:
         """Values of an arbitrary bit range, frame by frame."""

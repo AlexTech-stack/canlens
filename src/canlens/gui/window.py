@@ -46,6 +46,13 @@ STRIP_TOP = 1.15
 STRIP_BOTTOM_MARGIN = 0.2
 AXIS_FALLBACK_PX = 34
 
+# Per-value layout rows of a multiplexed message, in pixels. The strip and
+# the layout rows share one left-axis width so that a bit column in one sits
+# exactly under the same column in the other; the strip's axis is blank.
+LAYOUT_ROW_PX = 16
+LAYOUT_MAX_ROWS = 12
+LEFT_AXIS_PX = 88
+
 # Screen order in the navigation bar.
 DATA_TAB = 0
 HEAT_MAP_TAB = 1
@@ -188,7 +195,9 @@ class BitStripView(pg.PlotWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setMenuEnabled(False)
-        self.getPlotItem().hideAxis("left")
+        left = self.getPlotItem().getAxis("left")
+        left.setStyle(showValues=False, tickLength=0)
+        left.setWidth(LEFT_AXIS_PX)
         self.getPlotItem().setLabel("bottom", "payload bit")
         self._image = pg.ImageItem(axisOrder="row-major")
         self.addItem(self._image)
@@ -336,6 +345,78 @@ class BitStripView(pg.PlotWidget):
         self._lay_out_labels()
 
 
+class LayoutView(pg.PlotWidget):
+    """One strip per selector value of a multiplexed message.
+
+    The strip above classifies the message as a whole, which for a
+    multiplexed message blends its layouts together. Here the frames are
+    split by the selector's value and each row is classified over its own
+    frames, in the same colours, under the same bit axis -- so the VIN's
+    three ASCII slices read as three constant rows where the whole-message
+    strip showed one busy one, and a signal that exists under only one value
+    shows up green on that row and white on the rest. The selector's own
+    column is boxed on every row. Hidden when the message is not multiplexed.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setMenuEnabled(False)
+        self.getPlotItem().setLabel("bottom", "payload bit")
+        left = self.getPlotItem().getAxis("left")
+        left.setStyle(tickLength=0)
+        left.setWidth(LEFT_AXIS_PX)
+        self._image = pg.ImageItem(axisOrder="row-major")
+        self.addItem(self._image)
+        self._overlay: QtWidgets.QGraphicsRectItem | None = None
+        self.setVisible(False)
+
+    def show_row(self, model: SegmentModel, index: int) -> None:
+        if self._overlay is not None:
+            self.removeItem(self._overlay)
+            self._overlay = None
+        layouts = model.layouts(index)
+        if not layouts:
+            self.setVisible(False)
+            return
+        row = model.rows[index]
+        mux = row.inference.multiplexor  # type: ignore[union-attr]
+        assert mux is not None
+        table = lookup_table()
+        rgba = np.zeros((len(layouts), row.bits, 4), dtype=np.ubyte)
+        for i, (_value, _frames, kinds) in enumerate(layouts):
+            rgba[i, :, :3] = table[kinds]
+        rgba[:, :, 3] = 255
+
+        # Rows read top-down in selector order, so the array is flipped: row
+        # i is drawn at y = count - 1 - i, and its tick sits at its centre.
+        count = len(layouts)
+        self._image.setImage(rgba[::-1], levels=(0, 255))
+        self._image.setRect(QtCore.QRectF(0, 0, row.bits, count))
+        # "value (frames)" -- kept short enough for the shared axis width.
+        ticks = [
+            (count - i - 0.5, f"{value} ({frames})")
+            for i, (value, frames, _kinds) in enumerate(layouts)
+        ]
+        self.getPlotItem().getAxis("left").setTicks([ticks])
+        self.getPlotItem().getAxis("bottom").setTicks(byte_ticks(row.bits))
+
+        box = QtWidgets.QGraphicsRectItem(mux.start_bit, 0, mux.length, count)
+        box.setBrush(pg.mkBrush(MUX_RGBA[0], MUX_RGBA[1], MUX_RGBA[2], 50))
+        box.setPen(pg.mkPen(MUX_RGBA[:3], width=2))
+        box.setZValue(5)
+        self.addItem(box)
+        self._overlay = box
+
+        shown = min(count, LAYOUT_MAX_ROWS)
+        axis = self.getPlotItem().getAxis("bottom").height() or AXIS_FALLBACK_PX
+        self.setFixedHeight(shown * LAYOUT_ROW_PX + axis + 8)
+        self.getPlotItem().setLimits(xMin=-1, xMax=row.bits + 1, yMin=0, yMax=count)
+        self.setXRange(0, row.bits, padding=0.01)
+        # Too many values to show at once: start at the top, the rest pans.
+        self.setYRange(count - shown, count, padding=0)
+        self.setVisible(True)
+
+
 class DetailPanel(QtWidgets.QWidget):
     """Findings for the selected message, and the counter's values over time."""
 
@@ -351,6 +432,11 @@ class DetailPanel(QtWidgets.QWidget):
         self.strip = BitStripView()
         self.strip.selection_changed.connect(self._on_selection)
         layout.addWidget(self.strip)
+
+        self.layouts = LayoutView()
+        # Zoom and pan together: a layout row is read against the strip above.
+        self.layouts.setXLink(self.strip)
+        layout.addWidget(self.layouts)
 
         self.selection = QtWidgets.QLabel("—")
         self.selection.setStyleSheet("color: #9fb4d0; font-family: monospace;")
@@ -444,6 +530,7 @@ class DetailPanel(QtWidgets.QWidget):
         self._model = model
         self._index = index
         self.strip.show_row(model, index)
+        self.layouts.show_row(model, index)
         self._refresh_named()
         self.heading.setText(
             f"{row.label}   {row.count} frames x {row.width} bytes"

@@ -855,8 +855,16 @@ Everything the CLI prints, arranged for the reverse-engineering loop:
 - **centre** — the whole bus as one bit matrix, rows ordered **by identifier**:
   standard IDs ascending, then extended, grouped by bus. Dividers mark each
   bus change and the step into extended IDs
-- **strip** — the selected message magnified, with inferred counter and
-  checksum fields outlined and labelled
+- **strip** — the selected message magnified, with inferred counter,
+  checksum and multiplexor fields outlined and labelled
+- **layouts** — for a multiplexed message only, one strip per selector value
+  directly under the main strip, each classified over that value's frames
+  alone and labelled with the value and its frame count. The selector's
+  column is boxed on every row. The whole-message strip blends the layouts
+  together: the VIN's three ASCII slices make bytes 1-7 look busy, while the
+  layout rows show three constant slices. A signal that exists under one value
+  only is green on that row and white on the others. Beyond twelve values the
+  rows pan
 - **selection** — drag on the strip to pick any bit range; the plot and the
   summary line follow live
 - **bottom** — findings, and the selected field's values over time
