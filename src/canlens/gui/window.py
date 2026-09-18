@@ -20,6 +20,7 @@ from ..corpus import Manifest, segment_dest
 from ..export import save_pdu_db
 from ..filters import TraceFilter
 from .axes import bus_ticks, byte_ticks
+from .corroborate import CorroborateScreen
 from .data import DataScreen
 from .model import SegmentModel, load_segment
 from .palette import BACKGROUND, CHECKSUM_RGBA, COUNTER_RGBA, NAMED_RGBA, lookup_table
@@ -48,6 +49,7 @@ AXIS_FALLBACK_PX = 34
 # Screen order in the navigation bar.
 DATA_TAB = 0
 HEAT_MAP_TAB = 1
+CORROBORATE_TAB = 2
 
 
 class BitMatrixView(pg.PlotWidget):
@@ -517,11 +519,16 @@ class Workbench(QtWidgets.QMainWindow):
         self.data.open_segment.connect(self.open_in_heat_map)
         self.data.corpus_changed.connect(self._on_corpus_changed)
 
+        self.corroborate = CorroborateScreen(root, self.manifest)
+        # A fetch or delete changes which platforms can be corroborated.
+        self.data.corpus_changed.connect(self.corroborate.refresh_platforms)
+
         # The nav bar. Data leads because the first question on a fresh
         # machine is what is on disk, not what is in a trace.
         self.screens = QtWidgets.QTabWidget()
         self.screens.addTab(self.data, "Data")
         self.screens.addTab(heat_map, "Heat Map")
+        self.screens.addTab(self.corroborate, "Corroborate")
         self.screens.setCurrentIndex(DATA_TAB)
         self.screens.currentChanged.connect(self._on_screen_changed)
         self.setCentralWidget(self.screens)

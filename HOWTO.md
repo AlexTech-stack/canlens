@@ -636,13 +636,13 @@ byte 0.
 
 ---
 
-## 7. The workbench
+## 9. The workbench
 
 ```bash
 pip install -e ".[gui]" && canlens gui
 ```
 
-Two screens, chosen from the tabs along the top.
+Three screens, chosen from the tabs along the top.
 
 ### Data — the landing screen
 
@@ -665,6 +665,24 @@ filling the disk and failing partway.
 Nothing is decoded until the heat map is actually opened. Selecting a row is
 not a request to decode it — that distinction is worth a few seconds of
 startup and one avoided schema fetch.
+
+### Corroborate
+
+The `canlens corroborate` command as a screen. Pick a platform (only those
+with local segments are offered), press **Corroborate**, and the pass runs on
+a worker thread with a progress bar — milliseconds per segment from the
+results cache, but a platform can have thousands.
+
+The table is one row per message, by identifier: segments, devices, width,
+layout agreement, rare-bit count, and every hypothesis with its tier. A
+`bus,can id` filter takes the same wildcards as everywhere else.
+
+Select a row for the consensus strip. **Colour is the consensus class;
+opacity is agreement** — a bit every segment classifies the same way is solid,
+one the platform splits over fades toward the background. **Rare bits are
+outlined in orange**, because their consensus colour is the constant white
+that hides exactly what makes them interesting. Below it, every hypothesis
+with its evidence, tier, and contested flag.
 
 ### Heat Map
 
@@ -829,7 +847,7 @@ Headless check, the same way BoAt verifies its Qt client:
 QT_QPA_PLATFORM=offscreen canlens gui
 ```
 
-## 9. Gotchas
+## 10. Gotchas
 
 **Mixed payload lengths.** When a message's length varies, bit statistics are
 computed over the *dominant* length only and the row is flagged with `*`.
@@ -852,7 +870,7 @@ short.
 
 ---
 
-## 10. Development
+## 11. Development
 
 ```bash
 ./.venv/bin/pytest -q

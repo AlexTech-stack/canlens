@@ -167,7 +167,8 @@ class TestNavigationBar:
         from canlens.gui.window import DATA_TAB
 
         labels = [window.screens.tabText(i) for i in range(window.screens.count())]
-        assert labels == ["Data", "Heat Map"]
+        # Data leads; the full tab list is asserted where each screen is tested.
+        assert labels[:2] == ["Data", "Heat Map"]
         assert window.screens.currentIndex() == DATA_TAB
 
     def test_opening_the_window_decodes_nothing(self, window):
