@@ -192,3 +192,15 @@ class TestAgainstBoatSchema:
 
     def test_an_empty_document_validates(self, validator):
         validator.validate(to_pdu_db([]))
+
+
+class TestMultiplexFields:
+    def test_selector_and_group_are_written_only_when_set(self):
+        from canlens.export.pdu_db import SignalEntry
+
+        plain = SignalEntry("Speed", 8, 16).to_json(1)
+        assert "IsMuxor" not in plain and "MuxValue" not in plain
+        selector = SignalEntry("Multiplexor", 0, 8, is_muxor=True).to_json(2)
+        assert selector["IsMuxor"] is True and "MuxValue" not in selector
+        member = SignalEntry("VIN_4", 8, 8, mux_value=1).to_json(3)
+        assert member["MuxValue"] == 1 and "IsMuxor" not in member

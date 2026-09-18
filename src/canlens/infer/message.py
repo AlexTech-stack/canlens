@@ -24,6 +24,7 @@ from ..decode.frameset import FrameSet, Message
 from .checksums import ChecksumHypothesis, find_checksums, find_e2e_crc8
 from .counters import CounterHypothesis, find_counters
 from .crc16 import Crc16Hypothesis, find_crc16
+from .multiplex import MultiplexHypothesis, find_multiplexor
 
 # How many payloads to materialise as bytes for the detectors that still read
 # them (the Data-ID solver reads 4, the CRC screen 64). Everything that scores
@@ -61,6 +62,7 @@ class MessageInference:
     counters: list[CounterHypothesis] = field(default_factory=list)
     checksums: list[ChecksumHypothesis] = field(default_factory=list)
     crc16s: list[Crc16Hypothesis] = field(default_factory=list)
+    multiplexor: MultiplexHypothesis | None = None
 
     @property
     def key(self) -> tuple[int, int]:
@@ -68,7 +70,7 @@ class MessageInference:
 
     @property
     def found_anything(self) -> bool:
-        return bool(self.counters or self.checksums or self.crc16s)
+        return bool(self.counters or self.checksums or self.crc16s or self.multiplexor)
 
     def __str__(self) -> str:
         return f"bus {self.bus} 0x{self.address:03X}"
@@ -158,16 +160,50 @@ def _build(
         matrix=byte_matrix,
         **kwargs.get("crc16_options", {}),
     ) + wider
+    explained_bytes = {c.byte_index for c in checksums}
+    for crc in crc16s:
+        explained_bytes.update(range(crc.start_byte, crc.start_byte + crc.nbytes))
+    multiplexor = find_multiplexor(
+        matrix,
+        skip_bytes=explained_bytes,
+        counter_bits={b for c in counters for b in range(c.start_bit, c.end_bit)},
+    )
     return MessageInference(
         bus=bus,
         address=address,
         width=width,
         frames=matrix.shape[0],
         bits=bits,
-        counters=outside_checksums(counters, checksums, crc16s),
+        counters=outside_multiplex(
+            outside_checksums(counters, checksums, crc16s), multiplexor
+        ),
         checksums=checksums,
         crc16s=crc16s,
+        multiplexor=multiplexor,
     )
+
+
+def outside_multiplex(
+    counters: list[CounterHypothesis], multiplexor: MultiplexHypothesis | None
+) -> list[CounterHypothesis]:
+    """Drop counters that are really the selector, or a slice it decides.
+
+    A selector that cycles 0, 1, 2 is numerically a counter modulo 3, and the
+    bytes it multiplexes cycle with it: the Jeep's VIN message showed seven
+    "2-bit counters" that were all the same three-frame cycle seen through
+    different windows. A counter that moves inside every group -- an alive
+    counter on a multiplexed PDU -- is untouched, because it is not among the
+    dependent bits.
+    """
+    if multiplexor is None:
+        return counters
+    taken = set(multiplexor.dependent_bits) | set(
+        range(multiplexor.start_bit, multiplexor.end_bit)
+    )
+    # Whole containment, not overlap: a counter advancing once per frame
+    # under a two-frame schedule has its lowest bit locked to the selector,
+    # and that one bit does not make the counter a slice of the layout.
+    return [c for c in counters if not set(range(c.start_bit, c.end_bit)) <= taken]
 
 
 def outside_checksums(

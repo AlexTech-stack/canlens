@@ -141,6 +141,28 @@ class Crc16Consensus:
         )
 
 
+@dataclass
+class MultiplexConsensus:
+    start_bit: int
+    length: int
+    values: tuple[int, ...]  # union of the values seen across segments
+    evidence: Evidence
+    contested: bool = False
+
+    @property
+    def end_bit(self) -> int:
+        return self.start_bit + self.length
+
+    def __str__(self) -> str:
+        shown = ", ".join(str(v) for v in self.values[:8])
+        more = f", … ({len(self.values)} values)" if len(self.values) > 8 else ""
+        flag = " CONTESTED" if self.contested else ""
+        return (
+            f"{self.length}-bit multiplexor @ bit {self.start_bit}: values {shown}{more} "
+            f"({self.evidence}){flag}"
+        )
+
+
 @dataclass(frozen=True)
 class BitConsensus:
     """What a bit position does across segments."""
@@ -164,6 +186,7 @@ class MessageConsensus:
     counters: list[CounterConsensus] = field(default_factory=list)
     checksums: list[ChecksumConsensus] = field(default_factory=list)
     crc16s: list[Crc16Consensus] = field(default_factory=list)
+    multiplexors: list[MultiplexConsensus] = field(default_factory=list)
 
     @property
     def key(self) -> tuple[int, int]:
@@ -305,7 +328,15 @@ def _consolidate(
     crc16s: dict[tuple[int, str, str, int | None, int], dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
+    multiplexors: dict[tuple[int, int], dict[str, list[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    mux_values: dict[tuple[int, int], set[int]] = defaultdict(set)
     for device, m in same:
+        if m.multiplexor is not None:
+            mux = m.multiplexor
+            multiplexors[(mux.start_bit, mux.length)][device].append(mux.coverage)
+            mux_values[(mux.start_bit, mux.length)].update(mux.values)
         for ctr in m.counters:
             counters[(ctr.start_bit, ctr.length, ctr.stride, ctr.modulus)][device].append(
                 ctr.match_rate
@@ -331,7 +362,13 @@ def _consolidate(
         Crc16Consensus(b, algo, order, ident, _evidence(hits, of_segments, of_devices), nbytes=n)
         for (b, algo, order, ident, n), hits in crc16s.items()
     ]
-    _mark_contested(counter_out, checksum_out, crc16_out)
+    mux_out = [
+        MultiplexConsensus(
+            s, n, tuple(sorted(mux_values[(s, n)])), _evidence(hits, of_segments, of_devices)
+        )
+        for (s, n), hits in multiplexors.items()
+    ]
+    _mark_contested(counter_out, checksum_out, crc16_out, mux_out)
 
     strongest = lambda item: (-item.evidence.support, -item.evidence.devices)
     return MessageConsensus(
@@ -347,6 +384,7 @@ def _consolidate(
         counters=sorted(counter_out, key=strongest),
         checksums=sorted(checksum_out, key=strongest),
         crc16s=sorted(crc16_out, key=strongest),
+        multiplexors=sorted(mux_out, key=strongest),
     )
 
 
@@ -354,6 +392,7 @@ def _mark_contested(
     counters: list[CounterConsensus],
     checksums: list[ChecksumConsensus],
     crc16s: list[Crc16Consensus],
+    multiplexors: list[MultiplexConsensus] | None = None,
 ) -> None:
     """Flag hypotheses that claim the same bits with different parameters.
 
@@ -373,6 +412,10 @@ def _mark_contested(
         for other_crc in crc16s[i + 1 :]:
             if crc.start_byte == other_crc.start_byte:
                 crc.contested = other_crc.contested = True
+    # A message has one selector; two different ones cannot both be right.
+    for i, mux in enumerate(multiplexors or []):
+        for other_mux in multiplexors[i + 1 :]:  # type: ignore[index]
+            mux.contested = other_mux.contested = True
 
 
 def corroborate_platform(

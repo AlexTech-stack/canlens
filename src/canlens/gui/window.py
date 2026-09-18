@@ -23,7 +23,7 @@ from .axes import bus_ticks, byte_ticks
 from .corroborate import CorroborateScreen
 from .data import DataScreen
 from .model import SegmentModel, load_segment
-from .palette import BACKGROUND, CHECKSUM_RGBA, COUNTER_RGBA, NAMED_RGBA, lookup_table
+from .palette import BACKGROUND, CHECKSUM_RGBA, COUNTER_RGBA, MUX_RGBA, NAMED_RGBA, lookup_table
 
 pg.setConfigOption("background", BACKGROUND)
 pg.setConfigOption("foreground", "#d7dae0")
@@ -158,7 +158,7 @@ class BitMatrixView(pg.PlotWidget):
         if self._model is None:
             return
         for start, length, kind in self._model.field_spans(index):
-            colour = COUNTER_RGBA if kind == "counter" else CHECKSUM_RGBA
+            colour = {"counter": COUNTER_RGBA, "mux": MUX_RGBA}.get(kind, CHECKSUM_RGBA)
             box = QtWidgets.QGraphicsRectItem(start, index, length, 1)
             box.setBrush(pg.mkBrush(*colour))
             box.setPen(pg.mkPen(colour[:3] + (220,), width=0))
@@ -313,6 +313,7 @@ class BitStripView(pg.PlotWidget):
             colour = {
                 "counter": COUNTER_RGBA,
                 "checksum": CHECKSUM_RGBA,
+                "mux": MUX_RGBA,
             }.get(kind, NAMED_RGBA)
             # The box hugs the strip; labels live underneath it, so a name can
             # never sit on top of the bits it is describing.
@@ -453,6 +454,8 @@ class DetailPanel(QtWidgets.QWidget):
             lines += [f"counter   {c}" for c in row.inference.counters]
             lines += [f"checksum  {s}" for s in row.inference.checksums]
             lines += [f"crc16     {c}" for c in row.inference.crc16s]
+            if row.inference.multiplexor is not None:
+                lines.append(f"mux       {row.inference.multiplexor}")
         self.findings.setPlainText("\n".join(lines) or "no counter or checksum reproduced this message")
 
         # Start on the most interesting known field, so the plot says something

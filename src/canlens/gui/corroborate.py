@@ -267,6 +267,9 @@ class CorroborateScreen(QtWidgets.QWidget):
     @staticmethod
     def _findings_text(m: MessageConsensus) -> str:
         parts = []
+        for mux in m.multiplexors:
+            parts.append(f"mux {mux.length}bit@{mux.start_bit} [{mux.evidence.tier}"
+                         + (",contested" if mux.contested else "") + "]")
         for ctr in m.counters:
             parts.append(f"ctr {ctr.length}bit@{ctr.start_bit} [{ctr.evidence.tier}"
                          + (",contested" if ctr.contested else "") + "]")
@@ -330,6 +333,7 @@ class CorroborateScreen(QtWidgets.QWidget):
         lines += [f"counter   {c}" for c in m.counters]
         lines += [f"checksum  {s}" for s in m.checksums]
         lines += [f"crc16     {c}" for c in m.crc16s]
-        if not (m.counters or m.checksums or m.crc16s):
+        lines += [f"mux       {x}" for x in m.multiplexors]
+        if not (m.counters or m.checksums or m.crc16s or m.multiplexors):
             lines.append("no counter or checksum found in any segment")
         self.findings.setPlainText("\n".join(lines))

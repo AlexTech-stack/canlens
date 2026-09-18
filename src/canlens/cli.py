@@ -175,7 +175,8 @@ def cmd_infer_trace(args) -> int:
         f"{len(results)} messages examined, {len(hits)} with findings: "
         f"{sum(len(m.counters) for m in hits)} counters, "
         f"{sum(len(m.checksums) for m in hits)} checksums, "
-        f"{sum(len(m.crc16s) for m in hits)} 16-bit CRCs"
+        f"{sum(len(m.crc16s) for m in hits)} 16-bit CRCs, "
+        f"{sum(m.multiplexor is not None for m in hits)} multiplexors"
     )
     if not hits:
         return 0
@@ -187,6 +188,11 @@ def cmd_infer_trace(args) -> int:
             + f" {c.match_rate:.0%}"
             for c in m.counters
         )
+        if m.multiplexor is not None:
+            mux = m.multiplexor
+            counters = ", ".join(
+                filter(None, [f"mux {mux.length}bit@{mux.start_bit} x{len(mux.values)}", counters])
+            )
         checks = ", ".join(
             [
                 f"{s.algorithm}@{'?' if s.ambiguous else s.byte_index}"
@@ -249,6 +255,9 @@ def cmd_infer_message(args) -> int:
         marks.update(
             dict.fromkeys(range(start_bit, start_bit + length), FIELD_MARKS["checksum"])
         )
+    if result.multiplexor is not None:
+        mux = result.multiplexor
+        marks.update(dict.fromkeys(range(mux.start_bit, mux.end_bit), FIELD_MARKS["mux"]))
 
     print(f"  {bit_strip(result.bits.kinds, color=color)}")
     if marks:
@@ -259,6 +268,15 @@ def cmd_infer_message(args) -> int:
     samples = args.samples or max(16, shutil.get_terminal_size((110, 24)).columns - 12)
 
     matrix = bit_matrix(payloads, width, order)
+    if result.multiplexor is not None:
+        mux = result.multiplexor
+        values = field_values(matrix, mux.start_bit, mux.length).tolist()
+        print(f"\n  mux      {mux.length} bits @ bit {mux.start_bit}, "
+              f"{len(mux.values)} values, {len(mux.dependent_bits)} bits depend on it")
+        print(f"           {sparkline(values, samples)}")
+        print(f"           {bar(mux.coverage)} {mux.coverage:.1%} of frames carry a listed value")
+        for value, count in zip(mux.values, mux.frames_per_value):
+            print(f"           value {value:>3}: {count} frames")
     for c in result.counters:
         values = field_values(matrix, c.start_bit, c.length).tolist()
         print(f"\n  counter  {c.length} bits @ bit {c.start_bit}, step {c.stride}, "
@@ -351,7 +369,9 @@ def cmd_corroborate(args) -> int:
                 print(f"  checksum  {chk}")
             for crc in m.crc16s:
                 print(f"  crc16     {crc}")
-            if not (m.counters or m.checksums or m.crc16s):
+            for mux in m.multiplexors:
+                print(f"  mux       {mux}")
+            if not (m.counters or m.checksums or m.crc16s or m.multiplexors):
                 print("  no counter or checksum found in any segment")
         print(f"\n{legend(color)}   digits: agreement decile   !: rare bit")
         return 0
@@ -360,6 +380,9 @@ def cmd_corroborate(args) -> int:
     print(f"\n{'message':<14}{'seg':>5}{'dev':>5}{'w':>4}{'agree':>7}{'rare':>6}  findings")
     for m in rows:
         findings = []
+        for mux in m.multiplexors:
+            findings.append(f"mux {mux.length}bit@{mux.start_bit} [{mux.evidence.tier}"
+                            + (",contested" if mux.contested else "") + "]")
         for ctr in m.counters:
             findings.append(f"ctr {ctr.length}bit@{ctr.start_bit} [{ctr.evidence.tier}"
                             + (",contested" if ctr.contested else "") + "]")

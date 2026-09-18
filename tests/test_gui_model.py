@@ -80,6 +80,7 @@ class TestFieldSpans:
         from canlens.infer.checksums import ChecksumHypothesis
         from canlens.infer.counters import CounterHypothesis
         from canlens.infer.crc16 import Crc16Hypothesis
+        from canlens.infer.multiplex import MultiplexHypothesis
 
         r = row((1, 0x210), [0] * 64)
         r.inference = MessageInference(
@@ -91,6 +92,7 @@ class TestFieldSpans:
             counters=[CounterHypothesis(0, 8, 1, 1.0, 100)],
             checksums=[ChecksumHypothesis(7, "toyota", 1.0, 100)],
             crc16s=[Crc16Hypothesis(2, "e2e_p05", "little", 1.0, 100, 0xFA10)],
+            multiplexor=MultiplexHypothesis(8, 8, (0, 1, 2), (34, 33, 33), (40, 41, 42), 100),
         )
         return SegmentModel("p", "r", None, None, [r])
 
@@ -99,6 +101,7 @@ class TestFieldSpans:
             (0, 8, "counter"),
             (56, 8, "checksum"),
             (16, 16, "checksum"),
+            (8, 8, "mux"),
         }
 
     def test_spans_stay_inside_the_payload(self, model):

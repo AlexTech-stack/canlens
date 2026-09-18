@@ -45,6 +45,8 @@ class SignalEntry:
     unit: str = ""
     init_value: float = 0.0
     comment: str = ""
+    is_muxor: bool = False  # the message's multiplexor selector
+    mux_value: int | None = None  # only present when the selector holds this
 
     def to_json(self, signal_id: int) -> dict[str, Any]:
         entry: dict[str, Any] = {
@@ -68,6 +70,10 @@ class SignalEntry:
         }
         if self.comment:
             entry["Comment"] = self.comment
+        if self.is_muxor:
+            entry["IsMuxor"] = True
+        if self.mux_value is not None:
+            entry["MuxValue"] = self.mux_value
         return entry
 
 

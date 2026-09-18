@@ -31,11 +31,13 @@ def profile(kinds: list[BitKind]) -> BitProfile:
 
 def message(
     key=(1, 0x210), width=1, kinds=None, counters=(), checksums=(), crc16s=(), frames=100,
+    multiplexor=None,
 ) -> MessageInference:
     kinds = kinds or [BitKind.CONSTANT] * (width * 8)
     return MessageInference(
         bus=key[0], address=key[1], width=width, frames=frames, bits=profile(kinds),
         counters=list(counters), checksums=list(checksums), crc16s=list(crc16s),
+        multiplexor=multiplexor,
     )
 
 
@@ -234,3 +236,37 @@ class TestDataIdsAndWraps:
         m = corroborate(obs)[(1, 0x210)]
         assert sorted(c.modulus for c in m.counters) == [0, 15]
         assert "mod 15" in str(next(c for c in m.counters if c.modulus == 15))
+
+
+class TestMultiplexors:
+    def test_selectors_are_pooled_by_position_and_values_unioned(self):
+        from canlens.infer.multiplex import MultiplexHypothesis
+
+        a = MultiplexHypothesis(0, 8, (0, 1, 2), (100, 100, 100), tuple(range(8, 40)), 300)
+        b = MultiplexHypothesis(0, 8, (0, 1, 2, 3), (75, 75, 75, 75), tuple(range(8, 40)), 300)
+        obs = [("x", [message(width=8, multiplexor=a)]), ("y", [message(width=8, multiplexor=b)]),
+               ("z", [message(width=8, multiplexor=a)])]
+        result = corroborate(obs)
+        [mux] = result[(1, 0x210)].multiplexors
+        assert (mux.start_bit, mux.length, mux.values) == (0, 8, (0, 1, 2, 3))
+        assert mux.evidence.segments == 3 and mux.evidence.devices == 3
+        assert mux.evidence.tier is Tier.ESTABLISHED
+        assert not mux.contested
+
+    def test_two_different_selectors_are_contested(self):
+        from canlens.infer.multiplex import MultiplexHypothesis
+
+        a = MultiplexHypothesis(0, 8, (0, 1, 2), (100, 100, 100), (8, 9), 300)
+        b = MultiplexHypothesis(8, 4, (0, 1), (150, 150), (16, 17), 300)
+        result = corroborate([("x", [message(width=8, multiplexor=a)]),
+                              ("y", [message(width=8, multiplexor=b)])])
+        muxes = result[(1, 0x210)].multiplexors
+        assert len(muxes) == 2 and all(m.contested for m in muxes)
+
+    def test_str_carries_the_evidence(self):
+        from canlens.infer.multiplex import MultiplexHypothesis
+
+        a = MultiplexHypothesis(0, 8, (0, 1, 2), (100, 100, 100), (8, 9), 300)
+        result = corroborate([("x", [message(width=8, multiplexor=a)])])
+        [mux] = result[(1, 0x210)].multiplexors
+        assert str(mux).startswith("8-bit multiplexor @ bit 0: values 0, 1, 2 (1/1 seg, 1/1 dev, consistent)")

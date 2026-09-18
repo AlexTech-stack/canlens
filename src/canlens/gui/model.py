@@ -252,6 +252,17 @@ class SegmentModel:
             return []
         named = {(s.start_bit, s.length) for s in row.signals}
         out = []
+        if row.inference.multiplexor is not None:
+            mux = row.inference.multiplexor
+            entry = self._derived_entry(
+                index, "Multiplexor", mux.start_bit, mux.length,
+                f"canlens: selects among {len(mux.values)} layouts; "
+                f"{len(mux.dependent_bits)} bits depend on it",
+                named,
+            )
+            if entry is not None:
+                entry.is_muxor = True
+            out.append(entry)
         for counter in row.inference.counters:
             wrap = f", wraps at {counter.modulus}" if counter.modulus else ""
             out.append(
@@ -327,7 +338,10 @@ class SegmentModel:
             return []
         spans = [(c.start_bit, c.length, "counter") for c in row.inference.counters]
         spans += [(s.start_bit, s.length, "checksum") for s in row.inference.checksums]
-        spans += [(c.start_bit, c.length, "checksum") for c in row.inference.crc16s]
+        spans += [(s.start_bit, s.length, "checksum") for s in row.inference.crc16s]
+        if row.inference.multiplexor is not None:
+            mux = row.inference.multiplexor
+            spans.append((mux.start_bit, mux.length, "mux"))
         return spans
 
 

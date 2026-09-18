@@ -456,6 +456,54 @@ the CRC byte is an affine image of the alive counter, and two of its bits walk
 0..3 as convincingly as a real counter — every Jeep Grand Cherokee message with
 a J1850 CRC showed such a phantom 2-bit counter before this was added.
 
+**Multiplexors** are the one finding that is about the *rest* of the payload.
+A multiplexed message reuses its bits for different signals depending on a
+selector field — the Jeep Grand Cherokee's 0x3E0 sends its VIN that way, byte
+0 cycling 0, 1, 2 and bytes 1-7 carrying a different slice of the string under
+each value. Read without the selector it looks like noise; read with it, every
+slice is constant. The detector groups the frames by each candidate field
+(bytes, nibbles, and 2- and 3-bit fields at either end of a byte) and asks how
+every other bit behaves *within* a group: a bit whose meaning depends on the
+selector is constant inside every group while differing between them, or is
+still in a good share of the frames and moving in another good share. Counters
+and slowly changing states behave the same in every group, because the groups
+interleave in time. Two things are required beyond that, and both came from
+what the first version reported. The selector must be on a **schedule** — each
+value revisited at a steady interval, with no long absences — because a
+validity flag or the sign bits of a value crossing zero also sort the frames
+into groups with different contents, but never regularly. And a bit that
+repeats every two, three or four frames *inside* a group is locked to a finer
+cycle than the selector, not moving: that is the CRC of a static message seen
+through a 3-bit window over its 4-bit counter, and it was most of what the
+Volkswagen platforms showed before the check existed. The finding names the
+selector, its values, and which bits depend on it:
+
+```
+  mux      8 bits @ bit 0, 3 values, 35 bits depend on it
+           ▁▄█▁▄█▁▄█▁▄█▁▄█▁▄█▁▄█▁▄█
+           ████████████████████ 100.0% of frames carry a listed value
+           value   0: 200 frames
+           value   1: 200 frames
+           value   2: 200 frames
+```
+
+The ruler marks the selector `M`. Checked against opendbc, where its DBCs
+define a multiplexor: the Volkswagen MQB `VIN_01` (0x6B4, a 2-bit selector in
+byte 0), Tesla's `VCFRONT_LVPowerState` (0x221, 5 bits in byte 0) and the
+Chrysler/Jeep VIN message are all found, and reported as the whole byte —
+the bits above the selector are constant, and the byte is what a DBC names.
+Hyundai's `EMS12` (0x329, a 2-bit selector switching six bits) is not: six
+bits are below the byte's worth of dependent bits the detector demands, and
+on a one-minute segment the switched signals never moved. A selector that is
+not a bit field at all — Volkswagen's 0x15A alternates two layouts on a
+function of its counter — is not claimed either.
+
+A counter that lies entirely inside the selector or its dependent bits is
+dropped: the VIN's byte 0 is numerically a counter modulo 3, and each ASCII
+slice cycles with it — seven "2-bit counters" on that one message before the
+detector existed. A counter that merely has its lowest bit locked to a
+two-frame schedule is kept.
+
 **Checksums** are only reported when a named algorithm *reproduces* the byte.
 The library is `sum8`, `sum8_complement`, `xor8`, `toyota`, and CRC-8 with
 polynomials 0x07, 0x1D (SAE J1850), and 0x2F; 16-bit CRCs and the AUTOSAR
@@ -1012,7 +1060,7 @@ even though development happens on 3.14.
 | `corpus/` | working — manifest, selective fetch, local accounting |
 | `decode/` | working — `rlog.zst` → `CanFrame` |
 | `analyze/` | working — timing, entropy, per-bit classification |
-| `infer/` | counters, 8-bit checksums, 16-bit CRCs and E2E Profile 5 Data IDs working; signal boundaries and multiplexors still to do |
+| `infer/` | counters, 8-bit checksums, 16-bit CRCs, the E2E profiles and multiplexors working; signal boundaries still to do |
 | `corroborate/` | cross-segment agreement with device-weighted evidence — **working**; cross-platform and bus alignment to do |
 | `truth/` | **not implemented** — opendbc ground truth, scoring the engine |
 
