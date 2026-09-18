@@ -346,8 +346,10 @@ def _best_e2e(
     All 256 candidates are scored on the sample only. A true Data ID reproduces
     the whole trace, so it reproduces the sample, so it is the sample's argmax;
     verifying that single candidate on every frame is therefore exact, and it
-    costs one pass instead of 256 -- which is what took a Rivian segment with
-    159 protected messages from 5 s to well under one.
+    costs one pass instead of 256. Measured on a Rivian segment with 159
+    protected messages: 4.98 s to 2.87 s. Less than the arithmetic promises,
+    so the sample screen itself -- 256 candidates, twice per candidate byte --
+    is now where the time goes.
     """
     screened = (_e2e_candidates(sample, index, second) == sample[None, :, index]).mean(axis=1)
     best = int(screened.argmax())
