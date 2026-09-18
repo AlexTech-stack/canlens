@@ -190,7 +190,8 @@ def cmd_infer_trace(args) -> int:
         checks = ", ".join(
             [
                 f"{s.algorithm}@{'?' if s.ambiguous else s.byte_index}"
-                + (f"/id{s.data_id:X}" if s.data_id is not None else "")
+                + ("/idlist" if s.algorithm == "e2e_p22"
+                   else f"/id{s.data_id:X}" if s.data_id is not None else "")
                 + f" {s.match_rate:.0%}"
                 for s in m.checksums
             ]
@@ -363,7 +364,10 @@ def cmd_corroborate(args) -> int:
             findings.append(f"ctr {ctr.length}b@{ctr.start_bit} [{ctr.evidence.tier}"
                             + (",contested" if ctr.contested else "") + "]")
         for chk in m.checksums:
-            ident = f"/id{chk.data_id:X}" if chk.data_id is not None else ""
+            ident = (
+                "/idlist" if chk.algorithm == "e2e_p22"
+                else f"/id{chk.data_id:X}" if chk.data_id is not None else ""
+            )
             findings.append(f"{chk.algorithm}@{chk.byte_index}{ident} [{chk.evidence.tier}"
                             + (",contested" if chk.contested else "") + "]")
         for crc in m.crc16s:

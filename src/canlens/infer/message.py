@@ -141,6 +141,16 @@ def _build(
         matrix=byte_matrix,
         counter=alive,
     )
+    # The remaining profiles run only where the payload could hold their
+    # header at all -- a Profile 6 is never tried on an 8-byte frame -- and
+    # only on bytes nothing simpler has already explained.
+    from .profiles import run_profiles
+
+    explained = {c.byte_index for c in checksums}
+    eight, wider = run_profiles(
+        byte_matrix, counters, candidate_bytes=sorted(candidates - explained)
+    )
+    checksums += eight
     return MessageInference(
         bus=bus,
         address=address,
@@ -155,7 +165,8 @@ def _build(
             candidate_bytes=[s for s in crc16_candidates if s + 1 in crc16_candidates],
             matrix=byte_matrix,
             **kwargs.get("crc16_options", {}),
-        ),
+        )
+        + wider,
     )
 
 

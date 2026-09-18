@@ -271,7 +271,10 @@ class CorroborateScreen(QtWidgets.QWidget):
             parts.append(f"ctr {ctr.length}b@{ctr.start_bit} [{ctr.evidence.tier}"
                          + (",contested" if ctr.contested else "") + "]")
         for chk in m.checksums:
-            ident = f"/id{chk.data_id:X}" if chk.data_id is not None else ""
+            ident = (
+                "/idlist" if chk.algorithm == "e2e_p22"
+                else f"/id{chk.data_id:X}" if chk.data_id is not None else ""
+            )
             parts.append(f"{chk.algorithm}@{chk.byte_index}{ident} [{chk.evidence.tier}"
                          + (",contested" if chk.contested else "") + "]")
         for crc in m.crc16s:

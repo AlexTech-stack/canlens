@@ -130,12 +130,13 @@ class Crc16Consensus:
     data_id: int | None
     evidence: Evidence
     contested: bool = False
+    nbytes: int = 2
 
     def __str__(self) -> str:
-        ident = "" if self.data_id is None else f", data ID 0x{self.data_id:04X}"
+        ident = "" if self.data_id is None else f", data ID 0x{self.data_id:X}"
         flag = " CONTESTED" if self.contested else ""
         return (
-            f"{self.algorithm} @ bytes {self.start_byte}-{self.start_byte + 1} "
+            f"{self.algorithm} @ bytes {self.start_byte}-{self.start_byte + self.nbytes - 1} "
             f"({self.byteorder}{ident}; {self.evidence}){flag}"
         )
 
@@ -301,7 +302,7 @@ def _consolidate(
     checksums: dict[tuple[int, str, int | None], dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
-    crc16s: dict[tuple[int, str, str, int | None], dict[str, list[float]]] = defaultdict(
+    crc16s: dict[tuple[int, str, str, int | None, int], dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
     for device, m in same:
@@ -314,9 +315,9 @@ def _consolidate(
                 chk.match_rate
             )
         for crc in m.crc16s:
-            crc16s[(crc.start_byte, crc.algorithm, crc.byteorder, crc.data_id)][device].append(
-                crc.match_rate
-            )
+            crc16s[(crc.start_byte, crc.algorithm, crc.byteorder, crc.data_id, crc.nbytes)][
+                device
+            ].append(crc.match_rate)
 
     counter_out = [
         CounterConsensus(s, n, stride, _evidence(hits, of_segments, of_devices), modulus=mod)
@@ -327,8 +328,8 @@ def _consolidate(
         for (b, algo, ident), hits in checksums.items()
     ]
     crc16_out = [
-        Crc16Consensus(b, algo, order, ident, _evidence(hits, of_segments, of_devices))
-        for (b, algo, order, ident), hits in crc16s.items()
+        Crc16Consensus(b, algo, order, ident, _evidence(hits, of_segments, of_devices), nbytes=n)
+        for (b, algo, order, ident, n), hits in crc16s.items()
     ]
     _mark_contested(counter_out, checksum_out, crc16_out)
 

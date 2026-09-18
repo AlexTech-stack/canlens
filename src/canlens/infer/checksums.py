@@ -148,6 +148,31 @@ VECTOR_ALGORITHMS: dict[str, VectorFn] = {
 }
 
 
+# A CRC hypothesis with a solved-for secret is only evidence when the data
+# constrains the secret. Each distinct payload content (with the CRC bytes
+# removed) is one 8-bit equation; a secret of k bytes needs more than k of
+# them or any value fits trivially. A static message with an alive counter has
+# sixteen distinct contents, which is exactly the size of a Profile 22 list --
+# and so, before this gate, Profile 22 was "found" on 136 of 230 platforms and
+# Profile 6 on 139, including Toyota, which uses a byte sum. The margin is what
+# makes a coincidental fit improbable rather than merely non-trivial.
+MIN_EQUATIONS = 8
+
+
+def distinct_contents(matrix: np.ndarray, skip: Sequence[int]) -> int:
+    """How many distinct payloads there are once the CRC bytes are removed."""
+    keep = [column for column in range(matrix.shape[1]) if column not in set(skip)]
+    if not keep or matrix.shape[0] == 0:
+        return 0
+    rows = np.ascontiguousarray(matrix[:, keep])
+    return int(np.unique(rows.view(np.dtype((np.void, rows.shape[1])))).size)
+
+
+def enough_evidence(matrix: np.ndarray, skip: Sequence[int], secret_bytes: int) -> bool:
+    """Whether the data can constrain a secret of `secret_bytes` bytes."""
+    return distinct_contents(matrix, skip) >= secret_bytes + MIN_EQUATIONS
+
+
 def as_matrix(payloads: Sequence[bytes]) -> np.ndarray:
     """Equal-width payloads as an (n, width) byte matrix."""
     if not payloads:
@@ -190,7 +215,13 @@ class ChecksumHypothesis:
             if self.ambiguous
             else f"byte {self.byte_index}"
         )
-        ident = "" if self.data_id is None else f", data ID 0x{self.data_id:X}"
+        if self.data_id is None:
+            ident = ""
+        elif self.algorithm == "e2e_p22":
+            ids = " ".join(f"{b:02X}" for b in self.data_id.to_bytes(16, "little"))
+            ident = f", data ID list [{ids}]"
+        else:
+            ident = f", data ID 0x{self.data_id:X}"
         return f"{self.algorithm} @ {where} ({self.match_rate:.1%}{ident})"
 
 
@@ -397,7 +428,7 @@ def find_e2e_crc8(
     sample = blob[:screen_frames]
     found = []
     for index in positions:
-        if not 0 <= index < width:
+        if not 0 <= index < width or not enough_evidence(blob, [index], 1):
             continue
         hit = None
         if address is not None:

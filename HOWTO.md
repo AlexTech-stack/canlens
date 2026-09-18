@@ -625,6 +625,66 @@ lengths can. On 94 Rivian messages of three widths, register-from-0x00 with
 no final XOR recovers the CAN identifier for all 94; every other convention
 yields noise. The detector uses what the wire showed.
 
+### Every profile the spec defines, gated by what a frame can hold
+
+All eight profiles of AUTOSAR_PRS_E2EProtocol FO R19-11 are implemented,
+each from its own section of the text:
+
+| profile | CRC | header | Data ID | detector |
+|---|---|---|---|---|
+| 1 / 11 | CRC-8 J1850 | 2 B | implicit, solved | `e2e_p11`, `e2e_p01_alt` |
+| 2 / 22 | CRC-8 0x2F | 2 B | implicit list of 16, one per counter value, solved | `e2e_p22` |
+| 5 | CRC-16 0x1021 | 3 B | implicit, solved | `e2e_p05` |
+| 6 | CRC-16 0x1021 | 5 B + Length | implicit, solved, appended **high byte first** | `e2e_p06` |
+| 4 | CRC-32P4 | 12 B + Length | explicit | `e2e_p04` |
+| 7 | CRC-64 | 20 B + Length | explicit | `e2e_p07` |
+
+`HEADER_BYTES` in `infer/profiles.py` is the single statement of what
+applies where: a profile is never tried on a payload narrower than its
+header, so a Profile 6 is not attempted on an 8-byte frame. Profiles carrying
+an explicit Length are gated on it before any CRC is computed — it must be
+at least the header and at most the payload — and the CRC is bounded by it,
+which is what makes padded CAN FD frames come out right.
+
+**The gate that mattered more than the width gate.** On first contact with
+the corpus, Profile 6 was "found" on 139 of 230 platforms and Profile 22 on
+136 — including Toyota, which uses a byte sum. A CRC hypothesis with a
+solved-for secret is only evidence when the data constrains the secret: each
+distinct payload content is one 8-bit equation, and a static message with an
+alive counter has exactly sixteen — the size of a Profile 22 list. Every
+solved-secret detector now requires at least `secret_bytes + 8` distinct
+contents. After it:
+
+```
+profile     messages  platforms
+e2e_p11         4283         27
+e2e_p22          993         26
+e2e_p05         3152         21
+e2e_p06            0          0
+e2e_p04            0          0
+e2e_p07            0          0
+platforms with no E2E profile: 175 of 230
+```
+
+Profile 22's 26 platforms are the VW / Audi / Skoda / Seat family, as
+expected — plus two outside it, at full match rate:
+
+```
+TESLA_MODEL_3: 1 of 90 messages, min match 1.000
+TESLA_MODEL_Y: 3 of 388 messages, min match 0.994
+JEEP_GRAND_CHEROKEE_2019: 1 of 189 messages, min match 0.998
+VOLKSWAGEN_GOLF_MK7: 35 of 227 messages, min match 1.000
+```
+
+Profiles 4, 6 and 7 are verified on spec-built frames only; nothing in this
+corpus uses them on CAN, which is itself the honest finding.
+
+One claim corrected in the process: appending the Data ID *after* the data
+does not make a final-XOR convention testable. The CRC table is linear over
+GF(2), so a constant XOR on the CRC is absorbed into every list entry
+uniformly. Profile 22's recovered IDs are relative to the 0xFF/0xFF
+convention, exactly as Profile 11's are to its own.
+
 ### The alive counter my detector rejected
 
 E2E alive counters run **0..14** in four bits — 0x0F is reserved

@@ -174,6 +174,7 @@ class Crc16Hypothesis:
     match_rate: float
     frames: int
     data_id: int | None = None
+    nbytes: int = 2  # 2 for CRC-16, 4 for Profile 4, 8 for Profile 7
 
     @property
     def start_bit(self) -> int:
@@ -181,12 +182,12 @@ class Crc16Hypothesis:
 
     @property
     def length(self) -> int:
-        return 16
+        return self.nbytes * 8
 
     def __str__(self) -> str:
-        ident = "" if self.data_id is None else f", data ID 0x{self.data_id:04X}"
+        ident = "" if self.data_id is None else f", data ID 0x{self.data_id:X}"
         return (
-            f"{self.algorithm} @ bytes {self.start_byte}-{self.start_byte + 1} "
+            f"{self.algorithm} @ bytes {self.start_byte}-{self.start_byte + self.nbytes - 1} "
             f"({self.byteorder}-endian{ident}, {self.match_rate:.1%})"
         )
 
@@ -336,10 +337,14 @@ def find_crc16(
     frames = blob.shape[0]
     found: list[Crc16Hypothesis] = []
 
+    from .checksums import enough_evidence
+
     for start in starts:
+        if not enough_evidence(blob, range(start, start + 2), 0):
+            continue
         stored = {order: v_read_crc(blob, start, order) for order in ("little", "big")}
         hit = _plain_hit(blob, sample, start, stored, min_match, frames)
-        if hit is None and search_data_id:
+        if hit is None and search_data_id and enough_evidence(blob, range(start, start + 2), 2):
             for byteorder in ("little", "big"):
                 hit = _p05_hit(
                     blob, screen, start, byteorder, stored[byteorder], min_match, frames

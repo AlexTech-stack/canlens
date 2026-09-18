@@ -263,7 +263,14 @@ class SegmentModel:
                 )
             )
         for checksum in row.inference.checksums:
-            ident = "" if checksum.data_id is None else f", data ID 0x{checksum.data_id:X}"
+            if checksum.data_id is None:
+                ident = ""
+            elif checksum.algorithm == "e2e_p22":
+                ident = ", data ID list " + " ".join(
+                    f"{b:02X}" for b in checksum.data_id.to_bytes(16, "little")
+                )
+            else:
+                ident = f", data ID 0x{checksum.data_id:X}"
             out.append(
                 self._derived_entry(
                     index, "Checksum", checksum.start_bit, checksum.length,
