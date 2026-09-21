@@ -187,7 +187,7 @@ def dependent_bits(
     groups: list[np.ndarray],
     exclude: set[int],
     scored_exclude: set[int] | frozenset[int] = frozenset(),
-) -> tuple[np.ndarray, bool, float]:
+) -> Dependence:
     """Bit positions whose behaviour depends on which group a frame is in.
 
     `groups` are boolean masks over the frames, one per selector value.
@@ -198,8 +198,9 @@ def dependent_bits(
     A bit qualifies if it is constant inside every group (and so, being
     non-constant overall, differs between them), or constant in groups holding
     at least MIN_SIDE_SHARE of the frames while moving in groups holding at
-    least as many. The second result says whether any bit met the second
-    signature, i.e. whether some slice actually carries a moving signal.
+    least as many. The two counts come back separately, because a selector
+    that is part of a counter is believable on the first signature and not on
+    the second.
 
     The third is the score the candidates are ranked on: how much of the
     payload's movement the grouping removes, summed over bits as the overall
@@ -228,7 +229,7 @@ def dependent_bits(
     grouped = matrix[inside]
     frames = grouped.shape[0]
     if frames == 0:
-        return np.zeros(0, dtype=np.int64), False, 0.0
+        return Dependence(np.zeros(0, dtype=np.int64), 0, 0, 0.0)
     overall_constant = grouped.min(axis=0) == grouped.max(axis=0)
     overall_rate = (
         (np.diff(grouped, axis=0) != 0).mean(axis=0) if frames > 1 else np.zeros(bits)
@@ -261,7 +262,12 @@ def dependent_bits(
     scored = np.ones(bits, dtype=bool)
     scored[sorted(b for b in scored_exclude if b < bits)] = False
     explained = float(np.clip(overall_rate - within_rate, 0, None)[scored].sum())
-    return np.flatnonzero(dependent), bool(np.any(dependent & mixed)), explained
+    return Dependence(
+        bits=np.flatnonzero(dependent),
+        table=int(np.count_nonzero(dependent & table)),
+        gated=int(np.count_nonzero(dependent & mixed)),
+        explained=explained,
+    )
 
 
 def live_layouts(matrix: np.ndarray, groups: list[np.ndarray], dependent: np.ndarray) -> int:
@@ -285,6 +291,23 @@ def live_layouts(matrix: np.ndarray, groups: list[np.ndarray], dependent: np.nda
     return sum(1 for mask in groups if matrix[mask][:, dependent].any())
 
 
+@dataclass(frozen=True)
+class Dependence:
+    """What the dependent bits of one candidate rest on.
+
+    `table` bits are constant inside every group and so differ between them;
+    `gated` bits are still under some selector values and moving under others.
+    The two are mutually exclusive, and the distinction decides whether a
+    selector that is part of a counter may be believed -- see
+    `find_multiplexor`.
+    """
+
+    bits: np.ndarray
+    table: int
+    gated: int
+    explained: float
+
+
 def find_multiplexor(
     matrix: np.ndarray,
     *,
@@ -298,9 +321,10 @@ def find_multiplexor(
     is never tried as a selector -- it takes many values and everything
     "depends" on it -- and never counted as dependent, because under a
     counter used as the selector it is constant per group. `counter_bits`
-    are the bits of any counter found: a selector may well overlap one (the
-    VIN's 0, 1, 2 is a counter modulo 3), but a counter's own movement is
-    explained by the frame index and earns no candidate credit.
+    are the bits of any counter found. A selector may well overlap one -- the
+    VIN's 0, 1, 2 is a counter modulo 3 -- but a counter's own movement is
+    explained by the frame index and earns no candidate credit, and a
+    selector lying entirely inside one is believed only on table evidence.
 
     Candidates are scored by how much of the payload's movement grouping on
     them explains (see `dependent_bits`). The winner is the candidate with
@@ -348,15 +372,30 @@ def find_multiplexor(
             continue
         seen_partitions.add(signature)
 
-        dependent, has_moving, explained = dependent_bits(
-            matrix, masks, skipped_bits | set(range(start, start + length)), unscored
-        )
-        if dependent.size < min_dependent_bits:
+        selector_bits = set(range(start, start + length))
+        dep = dependent_bits(matrix, masks, skipped_bits | selector_bits, unscored)
+        if dep.bits.size < min_dependent_bits:
             continue
-        if live_layouts(matrix, masks, dependent) < MIN_LAYOUTS:
+        if live_layouts(matrix, masks, dep.bits) < MIN_LAYOUTS:
             continue
-        if not has_moving and (
-            dependent.size < MIN_TABLE_BITS
+        # A selector that is part of a counter has to determine the content,
+        # not merely gate it. A counter advancing every frame is a relabelling
+        # of the frame index, so grouping by its low bits groups by frame
+        # index modulo something, and any signal whose activity is periodic
+        # then looks selector-dependent. The VIN messages show this is no
+        # reason to reject counters outright: their selector cycles 0, 1, 2
+        # and the scan does report it as a counter, but each of its values
+        # maps to a *fixed* slice, which is the table signature. Requiring
+        # a byte's worth of table evidence keeps those and drops the
+        # coincidences. One table bit is not enough: an idle/active flag is
+        # constant per group all by itself, so the bar is the same one the
+        # dependent bits as a whole have to clear. All eight
+        # opendbc-confirmed selectors carry 14 to 45 table bits; 199 of 675
+        # corpus detections had a selector inside a counter and none.
+        if dep.table < min_dependent_bits and selector_bits <= set(counter_bits):
+            continue
+        if not dep.gated and (
+            dep.bits.size < MIN_TABLE_BITS
             or keep.size > MAX_TABLE_VALUES
             or plain_counter(values, keep)
         ):
@@ -366,10 +405,10 @@ def find_multiplexor(
             length=length,
             values=tuple(int(v) for v in keep),
             frames_per_value=tuple(int(m.sum()) for m in masks),
-            dependent_bits=tuple(int(b) for b in dependent),
+            dependent_bits=tuple(int(b) for b in dep.bits),
             frames=frames,
         )
-        found.append((explained, hypothesis))
+        found.append((dep.explained, hypothesis))
     if not found:
         return None
     top = max(explained for explained, _ in found)

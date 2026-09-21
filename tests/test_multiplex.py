@@ -219,8 +219,7 @@ class TestDependentBitsUseOnlyGroupedFrames:
         matrix[:, 0] = [i % 2 for i in range(n)]          # the selector bit
         matrix[-6:, 8:] = 1                               # moves only in stray frames
         groups = [np.array([i % 2 == v and i < n - 6 for i in range(n)]) for v in (0, 1)]
-        found, _moving, _explained = dependent_bits(matrix, groups, exclude={0})
-        assert found.size == 0
+        assert dependent_bits(matrix, groups, exclude={0}).bits.size == 0
 
     def test_a_bit_that_differs_between_groups_is_still_dependent(self):
         n = 200
@@ -228,8 +227,9 @@ class TestDependentBitsUseOnlyGroupedFrames:
         matrix[:, 0] = [i % 2 for i in range(n)]
         matrix[1::2, 8:] = 1                              # one value's layout
         groups = [np.array([i % 2 == v for i in range(n)]) for v in (0, 1)]
-        found, _moving, _explained = dependent_bits(matrix, groups, exclude={0})
-        assert set(found.tolist()) == set(range(8, 16))
+        found = dependent_bits(matrix, groups, exclude={0})
+        assert set(found.bits.tolist()) == set(range(8, 16))
+        assert found.table == 8 and found.gated == 0
 
 
 class TestLiveLayouts:
@@ -265,6 +265,41 @@ class TestIdleIsNotALayout:
         found = find_multiplexor(matrix_of(payloads))
         assert found is not None
         assert len(found.values) == 4
+
+
+class TestACounterIsNotASelector:
+    """A counter advancing every frame is a relabelling of the frame index."""
+
+    @staticmethod
+    def periodic_with_counter(n: int = 800) -> list[bytes]:
+        """Byte 0 counts 0-255; bytes 2-3 pulse with period 4, locked to it."""
+        rng = random.Random(11)
+        out = []
+        for i in range(n):
+            value = 0 if (i // 2) % 2 == 0 else 256 + rng.randrange(256)
+            out.append(bytes([i % 256, 0x5A]) + value.to_bytes(2, "little"))
+        return out
+
+    def test_a_signal_merely_in_phase_with_a_counter_is_not_a_layout(self):
+        payloads = self.periodic_with_counter()
+        counters = find_counters(matrix_of(payloads))
+        assert counters, "the message really does carry a counter"
+        bits = {b for c in counters for b in range(c.start_bit, c.end_bit)}
+        assert find_multiplexor(matrix_of(payloads), counter_bits=bits) is None
+
+    def test_without_telling_it_about_the_counter_it_is_fooled(self):
+        """The rule needs the counter; it cannot be inferred from the window."""
+        payloads = self.periodic_with_counter()
+        assert find_multiplexor(matrix_of(payloads)) is not None
+
+    def test_a_counter_that_selects_fixed_slices_is_still_a_multiplexor(self):
+        """The VIN shape: the selector is a counter, and it decides content."""
+        payloads = vin_like()
+        counters = find_counters(matrix_of(payloads))
+        bits = {b for c in counters for b in range(c.start_bit, c.end_bit)}
+        found = find_multiplexor(matrix_of(payloads), counter_bits=bits)
+        assert found is not None
+        assert (found.start_bit, found.length) == (0, 2)
 
 
 class TestTrimToMoving:

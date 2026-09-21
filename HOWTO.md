@@ -499,11 +499,19 @@ The count is per value rather than a veto, because a wide selector
 legitimately leaves most of its values empty: Volkswagen's 0x3FB has twenty
 values of which twelve carry nothing and the other eight are a real layout set.
 
-One failure mode remains known and unaddressed. If a counter's low bits happen
-to stay in phase with a periodic signal, those bits can be claimed as a
-selector — the counter is not a selector, it is merely locked to one. Real
-traces drift and drop frames, which breaks the lock and the schedule test
-catches it; a perfectly periodic trace would not be caught.
+A third rule handles counters. A counter advancing every frame is a
+relabelling of the frame index, so grouping by its low bits groups by frame
+index modulo something — and any signal whose activity is periodic then looks
+selector-dependent. The counter is not a selector; it is merely locked to one.
+But counters cannot simply be excluded, because the VIN selector *is* one: it
+cycles 0, 1, 2 and the counter scan duly reports it. What separates the two is
+that the VIN's selector **determines** the content, each value mapping to a
+fixed slice, while a locked counter only **gates** it. So a selector lying
+entirely inside a counter is believed only on a byte's worth of
+constant-per-group evidence. One such bit is not enough, since an idle/active
+flag is constant per group all by itself. The eight opendbc-confirmed
+selectors carry between 14 and 45 such bits; 199 of 675 detections had a
+selector inside a counter and none at all.
 
 The finding names the selector, its values, and which bits depend on it:
 
