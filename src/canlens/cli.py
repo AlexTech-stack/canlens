@@ -318,6 +318,79 @@ def cmd_export_pdu_db(args) -> int:
     return 0
 
 
+def cmd_truth_dbc(args) -> int:
+    from .truth import FieldKind, load_dbc
+
+    reference = load_dbc(args.dbc)
+    print(reference.summary())
+    named = sum(len(m.of_kind(FieldKind.SIGNAL)) for m in reference.messages.values())
+    print(f"{named} ordinary signals (not scored -- canlens does not infer boundaries)")
+    if not args.verbose:
+        return 0
+    print(f"\n{'message':<28}{'id':>7}  fields")
+    for message in sorted(reference.messages.values(), key=lambda m: m.address):
+        fields = [
+            f"{s.name}[{s.kind}]"
+            for s in message.signals
+            if s.kind is not FieldKind.SIGNAL
+        ]
+        if fields:
+            print(f"{message.name[:27]:<28}{message.address:>#7x}  {', '.join(fields)}")
+    return 0
+
+
+def cmd_truth_score(args) -> int:
+    from .analyze import BitOrder
+    from .infer import infer_cached
+    from .truth import load_dbc, score
+
+    reference = load_dbc(args.dbc)
+    inferences = infer_cached(args.path, root=args.root, order=BitOrder(args.order))
+    result = score(inferences, reference, bus=args.bus)
+
+    print(f"{_platform_label(args.root, args.path)}{args.path}")
+    print(f"reference {reference.summary()}")
+    print(
+        f"bus {result.bus}{'' if args.bus is not None else ' (best identifier overlap)'}: "
+        f"{result.trace_messages} messages in the trace, {result.scored_messages} also in the "
+        f"reference, {result.absent_from_trace} reference messages this drive never carried"
+    )
+    if not result.scored_messages:
+        print("canlens: no message is in both -- wrong DBC, or try --bus", file=sys.stderr)
+        return 1
+
+    print(f"\n{'field':<14}{'hit':>5}{'missed':>8}{'extra':>7}{'near':>6}"
+          f"{'precision':>11}{'recall':>9}")
+    for kind, tally in result.tallies.items():
+        if kind not in result.scorable:
+            continue
+        print(f"{kind!s:<14}{tally.hits:>5}{tally.missed:>8}{tally.false_alarms:>7}"
+              f"{tally.near:>6}{tally.precision:>10.0%}{tally.recall:>9.0%}")
+    overall = result.overall
+    if len(result.scorable) > 1:
+        print(f"{'overall':<14}{overall.hits:>5}{overall.missed:>8}{overall.false_alarms:>7}"
+              f"{overall.near:>6}{overall.precision:>10.0%}{overall.recall:>9.0%}")
+    for kind, count in result.unevaluated.items():
+        if count:
+            print(f"{kind!s:<14}{count:>5} claims not evaluated -- "
+                  f"this reference names no {kind}")
+
+    if result.disagreements and not args.no_detail:
+        shown = [d for d in result.disagreements if args.kind is None or str(d.kind) == args.kind]
+        print(f"\ndisagreements ({len(shown)}):")
+        for disagreement in shown[: args.top]:
+            mark = "~" if disagreement.overlapping else " "
+            print(f"  {mark} {disagreement}")
+        if len(shown) > args.top:
+            print(f"  ... and {len(shown) - args.top} more (use --top)")
+        print("\n~ marks a claim that overlaps the reference without matching it exactly.")
+    print(
+        "\nA disagreement is evidence, not a verdict: the reference is itself "
+        "reverse-engineered,\nand its authors often leave counters unnamed."
+    )
+    return 0
+
+
 def default_jobs() -> int:
     """Physical cores, not logical ones.
 
@@ -636,6 +709,33 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path", help="path to rlog.zst")
     p.add_argument("-o", "--output", required=True, help="destination .json")
     p.set_defaults(func=cmd_export_pdu_db)
+
+    truth = sub.add_parser("truth", help="score inference against an opendbc DBC")
+    tops = truth.add_subparsers(dest="op", required=True)
+
+    p = tops.add_parser("dbc", help="what ground truth a DBC offers")
+    p.add_argument("dbc", help="path to a .dbc file")
+    p.add_argument("-v", "--verbose", action="store_true", help="list every named field")
+    p.set_defaults(func=cmd_truth_dbc)
+
+    p = tops.add_parser("score", help="compare one segment against a DBC")
+    p.add_argument("path", help="path to rlog.zst")
+    p.add_argument("--dbc", required=True, help="path to the .dbc to score against")
+    p.add_argument("--bus", type=int, help="bus to score (default: best identifier overlap)")
+    p.add_argument("--top", type=int, default=25, help="disagreements to print (default: 25)")
+    p.add_argument(
+        "--kind",
+        choices=["counter", "checksum", "multiplexor"],
+        help="show disagreements of one kind only",
+    )
+    p.add_argument("--no-detail", action="store_true", help="rates only, no disagreements")
+    p.add_argument(
+        "--order",
+        choices=[o.value for o in BitOrder],
+        default=BitOrder.INTEL.value,
+        help="payload bit numbering (default: %(default)s)",
+    )
+    p.set_defaults(func=cmd_truth_score)
 
     p = sub.add_parser("corroborate", help="what holds across every local segment of a platform")
     p.add_argument("platform", help="platform key; see 'canlens corpus list'")

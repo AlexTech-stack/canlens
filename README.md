@@ -2,9 +2,8 @@
 
 Corpus-scale reverse engineering of automotive CAN bus traces.
 
-> **Status: pre-alpha.** `corpus`, `decode`, `analyze`, `infer`, `corroborate`,
-> `gui` and `export` work. `truth/` is scaffolding with an honest docstring
-> where the implementation will go.
+> **Status: pre-alpha.** Every layer works: `corpus`, `decode`, `analyze`,
+> `infer`, `corroborate`, `truth`, `gui` and `export`.
 
 **New here? Read [HOWTO.md](HOWTO.md)** — an end-to-end walkthrough from empty
 machine to per-bit measurements of a real vehicle's traffic.
@@ -81,7 +80,7 @@ data never needs a compiler. Everything else is an extra:
 |---|---|---|
 | `decode` | `pycapnp`, `zstandard` (only below 3.14) | reading `rlog.zst` |
 | `store` | `pyarrow` | decoded-frame cache |
-| `truth` | `cantools` | parsing opendbc DBCs |
+| `truth` | `cantools` | parsing opendbc DBCs to score inference against |
 | `traces` | `python-can` | `.blf` / `.asc` ingest |
 
 Two things worth knowing:
@@ -111,7 +110,7 @@ third-party package is skipped entirely.
 | `infer/` | counters, checksums, CRC-16/32/64, every AUTOSAR E2E profile, multiplexors — **working**; signal boundaries to do |
 | `corroborate/` | cross-segment agreement, device-weighted — **working** |
 | `gui/` | desktop workbench — **v0 working** |
-| `truth/` | opendbc ground truth, scoring the inference engine |
+| `truth/` | opendbc ground truth, scoring the inference engine — **working** |
 | `export/` | BoAt PDU-database JSON — **working** |
 
 ## Related

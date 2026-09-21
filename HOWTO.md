@@ -4,8 +4,9 @@ A walkthrough from empty machine to per-bit measurements of a real vehicle's
 CAN traffic. Every command and every number below was run against the live
 corpus, not invented.
 
-> **Scope.** `corpus`, `decode` and `analyze` work today. `infer`,
-> `corroborate` and `truth` are placeholders — see [Where this stops](#where-this-stops).
+> **Scope.** Every layer works today — `corpus`, `decode`, `analyze`, `infer`,
+> `corroborate`, `truth`, `gui` and `export`. What each one does *not* yet
+> claim is listed under [Where this stops](#where-this-stops).
 
 ---
 
@@ -757,7 +758,90 @@ milliseconds per segment once `cache build` has run: 11 EV6 segments in
 E2E-protected, since each is a solved search; the results are versioned
 (`INFER_VERSION`) and rebuilt when the detectors change.
 
-## 8. From Python
+## 8. Truth — scoring the engine
+
+Everything up to here produces claims. This scores them.
+
+opendbc carries community DBC files for many corpus platforms: someone
+reverse-engineered the bus by hand and wrote down the counters, the checksums
+and the multiplexors. That is an answer key, so inference can be *measured*
+rather than argued about.
+
+```bash
+canlens truth dbc /path/to/opendbc/vw_mqb.dbc
+canlens truth score <segment>/rlog.zst --dbc /path/to/opendbc/vw_mqb.dbc
+```
+
+```
+reference rivian_primary_actuator.dbc: 67 messages, 40 counters, 40 checksums, 0 multiplexors
+bus 0 (best identifier overlap): 50 messages in the trace, 30 also in the
+reference, 37 reference messages this drive never carried
+
+field           hit  missed  extra  near  precision   recall
+counter          26       0      0     0      100%     100%
+checksum         26       0      0     0      100%     100%
+overall          52       0      0     0      100%     100%
+```
+
+There is no automatic mapping from a corpus platform to a DBC file, so the
+file is named explicitly. The bus is chosen by identifier overlap, since a DBC
+describes one bus and the trace's numbering is the logger's; `--bus` forces it.
+
+### What the numbers are allowed to mean
+
+Three rules keep them honest, and each one exists because the naive version
+lies:
+
+**A reference message the drive never carried is not a miss.** It is absent
+data. Counting it would make recall a measure of how much of the car the
+driver happened to exercise.
+
+**A kind the reference never names is left out of the rates entirely.** The
+older Honda and Acura DBCs annotate neither counters nor checksums. Scoring
+canlens' 44 counter findings against `acura_ilx_2016_nidec.dbc` would report a
+precision of 0% when the truthful answer is "this reference cannot say". Those
+claims are reported as unevaluated instead.
+
+**A claim that overlaps a reference field without matching it exactly is
+`near`, never a hit.** A counter reported one bit wide of the truth is not
+agreement, and folding it in would make the headline number meaningless.
+
+### A disagreement is evidence, not a verdict
+
+The reference is itself reverse-engineered. It goes stale, community DBCs
+disagree with each other, and their authors routinely leave counters unnamed
+because naming them was not the point. So every disagreement is printed in
+both directions, with the message and the bit positions, for a person to
+judge:
+
+```
+  0x041 Airbag_03: checksum not found -- reference has Airbag_03_CRC (checksum, bits 0-7, 8 bits)
+  0x0A7 Motor_11: claimed counter 4bit@8 -- reference names none
+```
+
+The first is a real gap: canlens does not implement the CRC-8 variant
+Volkswagen uses. The second is almost certainly canlens being right and the
+DBC being incomplete, because MQB puts a counter in that nibble on nearly
+every message. The tool does not pretend to know which is which.
+
+### The bit numbering that has to be exactly right
+
+Every comparison here is a comparison of bit positions, so reading a DBC's
+numbering correctly is the whole game. cantools reports `Signal.start` in the
+DBC's own numbering, which is already the flat Intel index `analyze` produces.
+A little-endian signal runs *upward* from it. A big-endian one runs
+*downward*, and wraps to bit 7 of the next byte when it falls off the bottom
+of the current one.
+
+The obvious reading — that a big-endian start is an MSB0 "sawtooth" index
+needing conversion — is wrong, and wrong quietly. Measured against cantools'
+own decoder by setting one bit at a time and seeing which signal moved, it
+disagreed on 895 of 1070 signals. The rule above agrees on all 2925 signals of
+the 58 DBCs in opendbc, in both byte orders.
+
+---
+
+## 9. From Python
 
 ```python
 from canlens.corpus import Manifest
@@ -799,7 +883,7 @@ byte 0.
 
 ---
 
-## 9. The workbench
+## 10. The workbench
 
 ```bash
 pip install -e ".[gui]" && canlens gui
@@ -1018,7 +1102,7 @@ Headless check, the same way BoAt verifies its Qt client:
 QT_QPA_PLATFORM=offscreen canlens gui
 ```
 
-## 10. Gotchas
+## 11. Gotchas
 
 **Mixed payload lengths.** When a message's length varies, bit statistics are
 computed over the *dominant* length only and the row is flagged with `*`.
@@ -1041,7 +1125,7 @@ short.
 
 ---
 
-## 11. Development
+## 12. Development
 
 ```bash
 ./.venv/bin/pytest -q
@@ -1070,7 +1154,7 @@ even though development happens on 3.14.
 | `analyze/` | working — timing, entropy, per-bit classification |
 | `infer/` | counters, 8-bit checksums, 16-bit CRCs, the E2E profiles and multiplexors working; signal boundaries still to do |
 | `corroborate/` | cross-segment agreement with device-weighted evidence — **working**; cross-platform and bus alignment to do |
-| `truth/` | **not implemented** — opendbc ground truth, scoring the engine |
+| `truth/` | opendbc DBCs as a reference, precision and recall against them — **working**; no automatic platform-to-DBC mapping |
 
 `analyze` deliberately stops at measurement. It will tell you a bit flips on
 94% of frames; it will not tell you it is a counter. That claim requires

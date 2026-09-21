@@ -36,8 +36,8 @@ corpus  →  decode  →  analyze  →  infer  →  corroborate
 to a design document. **Read the section covering the layer you are about to touch before you
 touch it.** It records why thresholds have the values they do.
 
-**Status: pre-alpha.** `corpus`, `decode`, `analyze`, `infer`, `corroborate`, `gui` and `export`
-work. `truth/` is a docstring and nothing else.
+**Status: pre-alpha.** Every layer works: `corpus`, `decode`, `analyze`, `infer`,
+`corroborate`, `truth`, `gui` and `export`.
 
 ---
 
@@ -60,11 +60,10 @@ externally-managed, so a bare `pip install` fails and a bare `python3` may not s
 
 ### 2.2 What is installed
 
-Present: `numpy`, `pycapnp`, `PySide6`, `pyqtgraph`, `jsonschema`, `pytest`, `pytest-cov`,
-`ruff`, `mypy`.
+Present: `numpy`, `pycapnp`, `cantools`, `PySide6`, `pyqtgraph`, `jsonschema`, `pytest`,
+`pytest-cov`, `ruff`, `mypy`.
 
-Absent on purpose: `cantools` (`truth` extra), `pyarrow` (`store` extra), `python-can`
-(`traces` extra), `zstandard` — on Python 3.14 zstd comes from the stdlib as
+Absent on purpose: `pyarrow` (`store` extra), `python-can` (`traces` extra), `zstandard` — on Python 3.14 zstd comes from the stdlib as
 `compression.zstd` (PEP 784), so the third-party package is correctly not installed.
 
 **Do not install the missing extras to make a test pass.** Tests that need an absent
@@ -84,7 +83,7 @@ It is gitignored and **must stay that way**. The upstream bucket is about 299 GB
 ./.venv/bin/ruff check . && ./.venv/bin/mypy src && ./.venv/bin/pytest -q
 ```
 
-619 tests, about 13 seconds. **No corpus data is required** — the suite runs on synthetic
+684 tests, about 14 seconds. **No corpus data is required** — the suite runs on synthetic
 payloads with known ground truth.
 
 ### 2.5 The pipe trap — read this, it has bitten this project three times
@@ -115,6 +114,8 @@ ordering.
 ./.venv/bin/canlens infer trace <segment>/rlog.zst
 ./.venv/bin/canlens infer message <segment>/rlog.zst --address 0x210 --bus 1
 ./.venv/bin/canlens corroborate KIA_EV6
+./.venv/bin/canlens truth dbc <file.dbc>                 # what ground truth it offers
+./.venv/bin/canlens truth score <segment>/rlog.zst --dbc <file.dbc>
 ./.venv/bin/canlens export pdu-db <segment>/rlog.zst -o out.json
 ./.venv/bin/canlens cache {build,clear,status}
 ./.venv/bin/canlens gui
@@ -136,7 +137,7 @@ device and route. `corpus which` and the `[PLATFORM]` prefix on output are the w
 | `src/canlens/corroborate/` | device-weighted cross-segment agreement and tiering | working |
 | `src/canlens/gui/` | PySide6 workbench: Data, Heat Map, Corroborate screens | working |
 | `src/canlens/export/` | BoAt PDU-database JSON | working |
-| `src/canlens/truth/` | opendbc ground truth, scoring the engine | **not implemented** |
+| `src/canlens/truth/` | opendbc DBCs as a reference; precision/recall against them | working |
 | `src/canlens/cli.py` | the single `canlens` entry point | working |
 | `src/canlens/render.py` | terminal bit strips, sparklines, rulers, bars | working |
 | `src/canlens/filters.py` | `vehicle,segment,bus,can_id` wildcard filter (`*`, `?`) | working |
@@ -157,6 +158,8 @@ fetching data never drags in a compiler toolchain. Do not add a third-party impo
 | Change bit classification thresholds | `analyze/bits.py` |
 | Change cadence classification | `analyze/timing.py` |
 | Change cross-segment tiering | `corroborate/consensus.py` |
+| Change how a DBC is read | `truth/dbc.py` |
+| Change how findings are scored | `truth/score.py` |
 | Change what the GUI draws | `gui/window.py` (Qt) and `gui/model.py` (no Qt) |
 | Change terminal output | `cli.py` and `render.py` |
 
@@ -251,7 +254,7 @@ which actually uses a byte sum.
 
 ### 5.1 SPDX header on every new source file
 
-Two lines, after any shebang, matching the surrounding files. All 41 source files and all 26
+Two lines, after any shebang, matching the surrounding files. All 42 source files and all 27
 test files carry it; do not create one without it.
 
 ```python
@@ -344,13 +347,29 @@ Compare against the previous numbers before concluding the change was an improve
 that *reduces* findings is often the correct one, because most false positives look like extra
 findings.
 
-### 7.3 Verifying against ground truth
+### 7.3 Scoring against ground truth
 
 opendbc has community DBCs for many corpus platforms; a local clone may exist at
-`/home/testuser/BoAt/tools/dbc/opendbc`. Only a handful of DBCs declare multiplexors (`vw_pq`,
-`vw_mlb`, `vw_mqb`, `vw_mqbevo`, `tesla_can`, `tesla_model3_party`, `hyundai_2015_ccan`,
-`fca_giorgio`). Grep for `^ SG_ .* M ` to find them. This is currently a manual check; the
-`truth/` module that would automate it does not exist.
+`/home/testuser/BoAt/tools/dbc/opendbc`. There is no automatic platform-to-DBC mapping, so the
+file is named explicitly:
+
+```bash
+./.venv/bin/canlens truth dbc /path/to/vw_mqb.dbc          # is it worth scoring against?
+./.venv/bin/canlens truth score <segment>/rlog.zst --dbc /path/to/vw_mqb.dbc
+```
+
+The bus is chosen by identifier overlap and can be forced with `--bus`. Three rules keep the
+numbers honest, and changing any of them needs a reason:
+
+- A reference message the drive never carried is **not** a miss. It is counted separately.
+- A kind the reference never names at all is **left out of the rates entirely**. Older Honda
+  and Acura DBCs annotate no counters, and scoring 44 counter findings against one would report
+  0% precision when the truthful answer is "this reference cannot say".
+- A claim that overlaps a reference field without matching it exactly is `near`, never a hit.
+
+**A disagreement is evidence, not a verdict.** The reference is itself reverse-engineered and
+its authors routinely leave counters unnamed. Read the disagreement list before concluding that
+either side is wrong.
 
 ---
 
@@ -382,6 +401,11 @@ opendbc has community DBCs for many corpus platforms; a local clone may exist at
   large majority of early false positives.
 - **The machine has 6 physical cores and 12 logical.** `default_jobs()` in `cli.py` returns
   physical cores deliberately; the second thread of a core adds nothing to numpy-bound work.
+- **A DBC's big-endian start bit is not a sawtooth index.** cantools reports `Signal.start` in
+  the DBC's own numbering, which is already canlens' flat Intel index. A little-endian signal
+  runs upward from it; a big-endian one runs *downward* and wraps to bit 7 of the next byte.
+  Treating it as an MSB0 sawtooth and converting disagreed with cantools' own decoder on 895 of
+  1070 signals. The rule in `truth/dbc.py` agrees on all 2925 signals of the 58 DBCs in opendbc.
 - **Do not trust a timing claim you did not measure in this codebase.** Lazy attribute access
   across the pycapnp boundary made an early "0.02 s parse" claim wrong by two orders of
   magnitude.
@@ -399,8 +423,6 @@ opendbc has community DBCs for many corpus platforms; a local clone may exist at
   a little-endian sweep is not found.
 - **Variable-length E2E.** Profiles 4 and 7 are claimed only where Length is fixed across the
   trace, which is the honest scope of the check.
-- **`truth/`.** Scoring inferred signals against opendbc — the thing that would turn "the engine
-  produced an answer" into "the engine is measurably right" — is a docstring and nothing else.
 
 ---
 

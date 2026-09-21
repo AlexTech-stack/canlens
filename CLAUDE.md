@@ -22,8 +22,8 @@ The pipeline is `corpus → decode → analyze → infer → corroborate`, with 
 a BoAt PDU-database exporter hanging off the end. `HOWTO.md` is the end-to-end walkthrough and
 the closest thing to a design document; read the relevant section before working in a layer.
 
-> **Status: pre-alpha.** `corpus`, `decode`, `analyze`, `infer`, `corroborate`, `gui` and
-> `export` all work. `truth/` is a docstring and nothing else.
+> **Status: pre-alpha.** Every layer works: `corpus`, `decode`, `analyze`, `infer`,
+> `corroborate`, `truth`, `gui` and `export`.
 
 ## Environment
 
@@ -35,9 +35,9 @@ so always go through the venv rather than a bare `python3`/`pip`.
 ./.venv/bin/canlens corpus status
 ```
 
-Installed: `numpy`, `pycapnp`, `PySide6`, `pyqtgraph`, `jsonschema`, and the dev tools.
-**Not** installed: `cantools`, `pyarrow`, `python-can`, `zstandard` — the `truth`, `store` and
-`traces` extras. On 3.14 zstd comes from the stdlib (`compression.zstd`, PEP 784), so the
+Installed: `numpy`, `pycapnp`, `cantools`, `PySide6`, `pyqtgraph`, `jsonschema`, and the dev
+tools. **Not** installed: `pyarrow`, `python-can`, `zstandard` — the `store` and `traces`
+extras. On 3.14 zstd comes from the stdlib (`compression.zstd`, PEP 784), so the
 third-party package is correctly absent. Tests needing an absent extra skip cleanly; keep it
 that way.
 
@@ -53,7 +53,7 @@ Run all three before claiming anything is done:
 ./.venv/bin/ruff check . && ./.venv/bin/mypy src && ./.venv/bin/pytest -q
 ```
 
-619 tests, about 13 seconds, no corpus data required — the suite runs on synthetic payloads
+684 tests, about 14 seconds, no corpus data required — the suite runs on synthetic payloads
 with known ground truth.
 
 **Never pipe a gate command into `tail`/`head` without checking `PIPESTATUS`.** Doing so masked
@@ -81,12 +81,12 @@ the status of `tail`, which always succeeds:
 | `corroborate/` | device-weighted cross-segment agreement and tiering |
 | `gui/` | PySide6 workbench: Data, Heat Map and Corroborate screens |
 | `export/` | BoAt PDU-database JSON |
-| `truth/` | opendbc ground truth and scoring. **Not implemented** |
+| `truth/` | opendbc DBCs as a reference, and precision/recall against them |
 | `cli.py` | the one `canlens` entry point; `render.py` draws the terminal output |
 
 CLI verbs: `corpus {list,plan,fetch,status,delete,which}`, `decode {schema,summary}`,
-`analyze trace`, `infer {trace,message}`, `corroborate`, `export pdu-db`,
-`cache {build,clear,status}`, `gui`.
+`analyze trace`, `infer {trace,message}`, `corroborate`, `truth {dbc,score}`,
+`export pdu-db`, `cache {build,clear,status}`, `gui`.
 
 ## Hard invariants
 
@@ -137,7 +137,7 @@ platforms and Profile 6 from 139.
 ## Conventions
 
 **SPDX header on every new source file**, after any shebang, matching the surrounding files.
-All 40 source files and all 26 test files carry it.
+All 42 source files and all 27 test files carry it.
 
 ```python
 # Copyright 2026 Alexander Günther
@@ -202,6 +202,11 @@ than the function under test. Prefer synthetic payloads with known ground truth 
   messages of different lengths settles it. The convention in the code (register from 0x00, no
   final XOR, Data ID fed as `[addr & 0xFF, addr >> 8]`) recovers the CAN identifier as the Data
   ID on all 94 such messages of a Rivian; every other convention yields noise.
+- **A DBC's big-endian start bit is not a sawtooth index.** cantools reports `Signal.start` in
+  the DBC's own numbering, which is already canlens' flat Intel index. A little-endian signal
+  runs upward from it; a big-endian one runs *downward* and wraps to bit 7 of the next byte.
+  Treating it as an MSB0 sawtooth and converting disagreed with cantools' own decoder on 895 of
+  1070 signals. The rule in `truth/dbc.py` agrees on all 2925 signals of the 58 DBCs in opendbc.
 - **6 physical cores, 12 logical.** `default_jobs()` returns physical cores on purpose; the
   second thread of a core adds nothing to numpy-bound work.
 
@@ -216,14 +221,12 @@ Say so plainly rather than implying otherwise:
 - **Motorola search.** Bit order is a parameter, not something searched.
 - **Variable-length E2E.** Profiles 4 and 7 are claimed only where Length is fixed across the
   trace.
-- **`truth/`.** Scoring inferred signals against opendbc is the module that would turn "the
-  engine produced an answer" into "the engine is measurably right". It does not exist yet.
 
 ## Related
 
-- [opendbc](https://github.com/commaai/opendbc) — CAN database definitions, and the ground truth
-  the multiplexor detector was verified against. A local clone may exist at
-  `/home/testuser/BoAt/tools/dbc/opendbc`.
+- [opendbc](https://github.com/commaai/opendbc) — CAN database definitions, and the reference
+  `truth/` scores against. A local clone may exist at `/home/testuser/BoAt/tools/dbc/opendbc`.
+  There is no automatic platform-to-DBC mapping; `canlens truth score` takes `--dbc` explicitly.
 - [openpilot](https://github.com/commaai/openpilot) — `LogReader`, cabana, and the `cereal`
   schemas `decode/` pins.
 - **BoAt** — the deterministic SIL/HIL simulation platform this grew out of, and the consumer of
