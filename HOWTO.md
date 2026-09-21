@@ -476,8 +476,36 @@ into groups with different contents, but never regularly. And a bit that
 repeats every two, three or four frames *inside* a group is locked to a finer
 cycle than the selector, not moving: that is the CRC of a static message seen
 through a 3-bit window over its 4-bit counter, and it was most of what the
-Volkswagen platforms showed before the check existed. The finding names the
-selector, its values, and which bits depend on it:
+Volkswagen platforms showed before the check existed.
+
+Two more rules came from scoring against opendbc rather than from reading
+output. **Every statistic is taken over the frames that belong to a group**,
+never over the whole trace. Up to a twentieth of the frames carry a selector
+value too rare to keep, and the inference the detector makes — that a bit
+constant inside every group must therefore *differ between* groups — only
+follows if "overall" means the grouped frames. Rivian's 0x247 was claimed as a
+fifteen-layout message whose thirty-eight dependent bits were zero in all
+fifteen and carried data only in the twenty-five frames outside them. And **an
+all-zero payload is not a layout**: at least two selector values must carry
+something, because zero is the universal idle pattern, and without the rule
+any signal that alternates between carrying data and sitting at zero satisfies
+the still-here-moving-there test. The Audi A3's 0x0AF holds a 16-bit value
+that is zero on 53% of frames and 256-511 on the rest, and bit 8 of that value
+was claimed as a selector over its own low byte. Together the two rules took
+the corpus from 814 multiplexed messages to 675, and raised agreement with
+opendbc from 40% to 67% without losing a single match.
+
+The count is per value rather than a veto, because a wide selector
+legitimately leaves most of its values empty: Volkswagen's 0x3FB has twenty
+values of which twelve carry nothing and the other eight are a real layout set.
+
+One failure mode remains known and unaddressed. If a counter's low bits happen
+to stay in phase with a periodic signal, those bits can be claimed as a
+selector — the counter is not a selector, it is merely locked to one. Real
+traces drift and drop frames, which breaks the lock and the schedule test
+catches it; a perfectly periodic trace would not be caught.
+
+The finding names the selector, its values, and which bits depend on it:
 
 ```
   mux      8 bits @ bit 0, 3 values, 35 bits depend on it

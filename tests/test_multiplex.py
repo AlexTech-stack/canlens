@@ -12,8 +12,11 @@ import pytest
 from canlens.analyze.bits import BitOrder, bit_matrix
 from canlens.infer import ALGORITHMS, find_counters, infer_message
 from canlens.infer.multiplex import (
+    MIN_LAYOUTS,
     MultiplexHypothesis,
+    dependent_bits,
     find_multiplexor,
+    live_layouts,
     plain_counter,
     regular,
     selector_candidates,
@@ -176,6 +179,92 @@ class TestFindMultiplexor:
     def test_str_lists_the_values(self):
         h = MultiplexHypothesis(0, 8, (0, 1, 2), (200, 200, 200), tuple(range(8, 40)), 600)
         assert str(h) == "8-bit multiplexor @ bit 0: values 0, 1, 2; 32 dependent bits (100.0% of frames)"
+
+
+def pulsing(n: int = 800) -> list[bytes]:
+    """The Audi A3 0x0AF shape: one 16-bit value, idle at zero, then active.
+
+    Bytes 2-3 are a little-endian value that is 0 for two frames and then
+    somewhere in 256-511 for two. Bit 8 of that value correlates perfectly
+    with idle-versus-active, and its low byte is constant through the idle
+    frames and moving through the active ones -- the "still here, moving
+    there" signature exactly.
+
+    The real message also carries a counter in byte 1, left out here on
+    purpose. With a perfectly periodic synthetic trace the counter's low bits
+    lock to the pulse and become a selector in their own right, which is a
+    different failure mode from the one under test; on the real trace they do
+    not, because the phase drifts and the grouping stops being regular.
+    """
+    rng = random.Random(7)
+    out = []
+    for i in range(n):
+        value = 0 if (i // 2) % 2 == 0 else 256 + rng.randrange(256)
+        out.append(bytes([0x52, 0x5A]) + value.to_bytes(2, "little"))
+    return out
+
+
+class TestDependentBitsUseOnlyGroupedFrames:
+    """Evidence has to come from the frames being explained."""
+
+    def test_a_bit_moving_only_outside_every_group_is_not_dependent(self):
+        """Rivian 0x247: 38 bits zero in all 15 layouts, data only outside.
+
+        The inference the detector makes is that a bit constant inside every
+        group must differ *between* groups. That only follows when "overall"
+        means the grouped frames.
+        """
+        n = 200
+        matrix = np.zeros((n, 16), dtype=np.uint8)
+        matrix[:, 0] = [i % 2 for i in range(n)]          # the selector bit
+        matrix[-6:, 8:] = 1                               # moves only in stray frames
+        groups = [np.array([i % 2 == v and i < n - 6 for i in range(n)]) for v in (0, 1)]
+        found, _moving, _explained = dependent_bits(matrix, groups, exclude={0})
+        assert found.size == 0
+
+    def test_a_bit_that_differs_between_groups_is_still_dependent(self):
+        n = 200
+        matrix = np.zeros((n, 16), dtype=np.uint8)
+        matrix[:, 0] = [i % 2 for i in range(n)]
+        matrix[1::2, 8:] = 1                              # one value's layout
+        groups = [np.array([i % 2 == v for i in range(n)]) for v in (0, 1)]
+        found, _moving, _explained = dependent_bits(matrix, groups, exclude={0})
+        assert set(found.tolist()) == set(range(8, 16))
+
+
+class TestLiveLayouts:
+    """A selector value carrying nothing is an idle state, not a layout."""
+
+    def test_counts_only_the_values_that_carry_something(self):
+        matrix = np.zeros((40, 16), dtype=np.uint8)
+        matrix[20:, 8:12] = 1                     # only the second group has content
+        groups = [np.arange(40) < 20, np.arange(40) >= 20]
+        assert live_layouts(matrix, groups, np.arange(8, 16)) == 1
+
+    def test_two_layouts_that_both_carry_something(self):
+        matrix = np.zeros((40, 16), dtype=np.uint8)
+        matrix[:20, 8:10] = 1
+        matrix[20:, 10:12] = 1
+        groups = [np.arange(40) < 20, np.arange(40) >= 20]
+        assert live_layouts(matrix, groups, np.arange(8, 16)) == MIN_LAYOUTS
+
+    def test_no_dependent_bits_means_no_layouts(self):
+        groups = [np.arange(40) < 20, np.arange(40) >= 20]
+        assert live_layouts(np.zeros((40, 16), dtype=np.uint8), groups, np.array([])) == 0
+
+
+class TestIdleIsNotALayout:
+    def test_a_pulsing_value_is_not_a_multiplexor(self):
+        """The Audi A3 0x0AF false positive, reduced to its essentials."""
+        assert find_multiplexor(matrix_of(pulsing())) is None
+
+    def test_a_blank_layout_among_several_real_ones_is_tolerated(self):
+        """VW 0x3FB has 20 selector values, 12 of which carry nothing."""
+        slices = (b"AAAAAAA", b"BBBBBBB", bytes(7), b"CCCCCCC")
+        payloads = [bytes([i % 4]) + slices[i % 4] for i in range(800)]
+        found = find_multiplexor(matrix_of(payloads))
+        assert found is not None
+        assert len(found.values) == 4
 
 
 class TestTrimToMoving:

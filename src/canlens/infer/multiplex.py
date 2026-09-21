@@ -69,6 +69,9 @@ NEAR_BEST = 0.85
 # signal that merely correlates with another -- a gear and a derived lamp --
 # shows a few dependent bits, not a layout.
 MIN_DEPENDENT_BITS = 8
+# Selector values that must carry something. A value whose dependent bits are
+# all zero is an idle state, not a layout -- see `live_layouts`.
+MIN_LAYOUTS = 2
 # A bit "moves" inside a group when its transition rate there is at least
 # this. Below it a rare state change that happened to land in the group does
 # not count as evidence either way.
@@ -209,9 +212,27 @@ def dependent_bits(
     group on an unrelated bit leaves the rate of a fast signal unchanged and
     raises that of a slow one, so a needless refinement never scores higher.
     """
-    frames, bits = matrix.shape
-    overall_constant = matrix.min(axis=0) == matrix.max(axis=0)
-    overall_rate = (np.diff(matrix, axis=0) != 0).mean(axis=0)
+    bits = matrix.shape[1]
+    # Every statistic is taken over the frames that belong to a group, never
+    # over the whole trace. Up to MAX_UNEXPLAINED of the frames carry a
+    # selector value too rare to keep, and judging a bit "non-constant
+    # overall" on the strength of those is exactly wrong: the inference this
+    # function makes is that a bit constant inside every group must therefore
+    # *differ between* groups, and that only follows if "overall" means the
+    # grouped frames. Rivian's 0x247 was claimed as a 15-layout message whose
+    # 38 dependent bits were zero in all fifteen and carried data only in the
+    # 25 frames outside them; 123 of 814 corpus detections rested on this.
+    inside = np.zeros(matrix.shape[0], dtype=bool)
+    for mask in groups:
+        inside |= mask
+    grouped = matrix[inside]
+    frames = grouped.shape[0]
+    if frames == 0:
+        return np.zeros(0, dtype=np.int64), False, 0.0
+    overall_constant = grouped.min(axis=0) == grouped.max(axis=0)
+    overall_rate = (
+        (np.diff(grouped, axis=0) != 0).mean(axis=0) if frames > 1 else np.zeros(bits)
+    )
     constant_in = np.zeros(bits, dtype=np.int64)
     still_frames = np.zeros(bits, dtype=np.int64)
     moving_frames = np.zeros(bits, dtype=np.int64)
@@ -241,6 +262,27 @@ def dependent_bits(
     scored[sorted(b for b in scored_exclude if b < bits)] = False
     explained = float(np.clip(overall_rate - within_rate, 0, None)[scored].sum())
     return np.flatnonzero(dependent), bool(np.any(dependent & mixed)), explained
+
+
+def live_layouts(matrix: np.ndarray, groups: list[np.ndarray], dependent: np.ndarray) -> int:
+    """How many selector values carry anything at all in the dependent bits.
+
+    Zero is the universal idle pattern, so a value whose whole dependent block
+    is zero is a message saying nothing rather than a second reading of the
+    same bits. Without this, any signal that alternates between carrying data
+    and sitting at zero satisfies the "still here, moving there" test: the
+    Audi A3's 0x0AF holds a 16-bit value that is 0 on 53% of frames and
+    256-511 on the rest, and bit 8 of that value was claimed as a selector
+    over the low byte as its layout.
+
+    Counted per value rather than rejecting any message that has a blank one,
+    because a wide selector legitimately leaves most of its values empty --
+    Volkswagen's 0x3FB has 20 values of which 12 carry nothing and the other
+    eight are a real layout set.
+    """
+    if dependent.size == 0:
+        return 0
+    return sum(1 for mask in groups if matrix[mask][:, dependent].any())
 
 
 def find_multiplexor(
@@ -310,6 +352,8 @@ def find_multiplexor(
             matrix, masks, skipped_bits | set(range(start, start + length)), unscored
         )
         if dependent.size < min_dependent_bits:
+            continue
+        if live_layouts(matrix, masks, dependent) < MIN_LAYOUTS:
             continue
         if not has_moving and (
             dependent.size < MIN_TABLE_BITS
