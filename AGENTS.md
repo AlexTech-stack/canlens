@@ -401,6 +401,12 @@ either side is wrong.
   large majority of early false positives.
 - **The machine has 6 physical cores and 12 logical.** `default_jobs()` in `cli.py` returns
   physical cores deliberately; the second thread of a core adds nothing to numpy-bound work.
+- **Reasoning about what a DBC "would name" is not evidence; scoring against one is.** The
+  multiplexor detector reported the whole selector byte, justified by the argument that a byte
+  is what a DBC names. Scored against opendbc it matched none of the declared selectors, because
+  Volkswagen's `VIN_01_MUX` is two bits and Tesla's `VCFRONT_LVPowerStateIndex` is five. It now
+  claims the span that actually moves. Run `canlens truth score` before trusting that kind of
+  argument.
 - **A DBC's big-endian start bit is not a sawtooth index.** cantools reports `Signal.start` in
   the DBC's own numbering, which is already canlens' flat Intel index. A little-endian signal
   runs upward from it; a big-endian one runs *downward* and wraps to bit 7 of the next byte.

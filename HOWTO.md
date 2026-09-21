@@ -491,8 +491,15 @@ selector, its values, and which bits depend on it:
 The ruler marks the selector `M`. Checked against opendbc, where its DBCs
 define a multiplexor: the Volkswagen MQB `VIN_01` (0x6B4, a 2-bit selector in
 byte 0), Tesla's `VCFRONT_LVPowerState` (0x221, 5 bits in byte 0) and the
-Chrysler/Jeep VIN message are all found, and reported as the whole byte —
-the bits above the selector are constant, and the byte is what a DBC names.
+Chrysler/Jeep VIN message are all found, and reported as the span that
+actually moves rather than the whole byte the search found it in. An earlier
+version claimed the byte, on the reasoning that the byte is what a DBC names.
+Scoring against those same DBCs showed that reasoning was simply wrong:
+Volkswagen declares `VIN_01_MUX` as two bits and Tesla declares
+`VCFRONT_LVPowerStateIndex` as five, so the whole-byte form matched none of
+them. What a trace cannot recover is how wide the field was *declared* — a
+five-bit selector that only ever took two values is indistinguishable from a
+one-bit one — so what is claimed is the bits in use.
 Hyundai's `EMS12` (0x329, a 2-bit selector switching six bits) is not: six
 bits are below the byte's worth of dependent bits the detector demands, and
 on a one-minute segment the switched signals never moved. A selector that is

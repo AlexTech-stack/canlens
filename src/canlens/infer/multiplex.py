@@ -18,6 +18,9 @@ frames and moving in another good share. A bit that is one signal throughout
 every group, because the groups interleave in time and each one samples the
 whole trace.
 
+What is reported is the span of the selector that actually moves, not the
+whole byte or nibble it was found in -- see `trim_to_moving`.
+
 A multiplexor is a transmission schedule, not a vehicle state, and that is
 the second half of the test: each selector value must recur at a regular
 interval. The VIN's byte 0 goes 0, 1, 2, 0, 1, 2; a schedule that sends
@@ -274,8 +277,11 @@ def find_multiplexor(
     found: list[tuple[float, MultiplexHypothesis]] = []
     seen_partitions: set[bytes] = set()
     # Widest windows first, so that of several windows cutting the frames the
-    # same way -- a byte holding 0, 1, 2 and its low two bits -- the one kept
-    # is the whole field a DBC would name, not the narrowest slice of it.
+    # same way -- a byte holding 0, 1, 2 and its low two bits -- the one
+    # scored is the superset. The winner is narrowed to the bits that actually
+    # move afterwards, by `trim_to_moving`; starting wide and shrinking is
+    # more robust than starting narrow, because the widest window is the only
+    # one that can see every bit the selector might be using.
     for start, length in sorted(selector_candidates(bits), key=lambda c: (-c[1], c[0])):
         if start // 8 in skip_bytes:
             continue
@@ -324,4 +330,53 @@ def find_multiplexor(
         return None
     top = max(explained for explained, _ in found)
     near = [h for explained, h in found if explained >= NEAR_BEST * top]
-    return min(near, key=lambda h: (len(h.values), -h.length, h.start_bit))
+    winner = min(near, key=lambda h: (len(h.values), -h.length, h.start_bit))
+    return trim_to_moving(matrix, winner)
+
+
+def trim_to_moving(matrix: np.ndarray, hypothesis: MultiplexHypothesis) -> MultiplexHypothesis:
+    """Narrow a selector to the bits inside it that actually change.
+
+    The candidate windows are whole bytes and nibbles, so a two-bit selector
+    at the low end of a byte is found as the byte. Reporting the byte claims
+    that its six constant bits are part of the selector, which the trace does
+    not support -- and measurably does not match: scored against opendbc, the
+    whole-byte form matched none of the selectors the DBCs declare, because
+    Volkswagen's `VIN_01_MUX` is two bits and Tesla's
+    `VCFRONT_LVPowerStateIndex` is five.
+
+    So the claim is narrowed to the span the data justifies: from the lowest
+    bit of the window that moves to the highest. What cannot be recovered from
+    a trace is how wide the field was *declared* -- a five-bit selector that
+    only ever took two values is indistinguishable from a one-bit one -- so
+    this reports the bits in use, and a DBC may still name a wider field.
+
+    The partition is unchanged by construction: every bit dropped was constant
+    over the whole trace, so it cannot have separated one group from another.
+    The values are re-read at the narrower width; the dependent bits need no
+    recomputation, since a constant bit is excluded from those anyway.
+    """
+    window = matrix[:, hypothesis.start_bit : hypothesis.end_bit]
+    if window.shape[0] == 0 or window.shape[1] == 0:
+        return hypothesis
+    moving = np.flatnonzero(window.min(axis=0) != window.max(axis=0))
+    if moving.size == 0 or (moving[0] == 0 and moving[-1] == window.shape[1] - 1):
+        return hypothesis  # already exactly the moving span
+
+    start = hypothesis.start_bit + int(moving[0])
+    length = int(moving[-1] - moving[0]) + 1
+    values = field_values(matrix.astype(np.int64), start, length)
+    distinct, counts = np.unique(values, return_counts=True)
+    keep = [(int(v), int(c)) for v, c in zip(distinct, counts, strict=True) if c >= MIN_PER_VALUE]
+    if len(keep) != len(hypothesis.values):
+        # Cannot happen while every dropped bit was constant; if it somehow
+        # does, the wider claim is the one that was actually verified.
+        return hypothesis
+    return MultiplexHypothesis(
+        start_bit=start,
+        length=length,
+        values=tuple(v for v, _ in keep),
+        frames_per_value=tuple(c for _, c in keep),
+        dependent_bits=hypothesis.dependent_bits,
+        frames=hypothesis.frames,
+    )

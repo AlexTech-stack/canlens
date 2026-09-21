@@ -17,6 +17,7 @@ from canlens.infer.multiplex import (
     plain_counter,
     regular,
     selector_candidates,
+    trim_to_moving,
 )
 
 
@@ -93,22 +94,28 @@ class TestFindMultiplexor:
     def test_finds_a_vin_style_table(self):
         found = find_multiplexor(matrix_of(vin_like()))
         assert found is not None
-        assert (found.start_bit, found.length) == (0, 8)
+        # Byte 0 holds 0, 1, 2, so only its low two bits ever move.
+        assert (found.start_bit, found.length) == (0, 2)
         assert found.values == (0, 1, 2)
         assert found.frames_per_value == (200, 200, 200)
         assert found.coverage == 1.0
         # Every slice byte differs between at least two slices.
         assert {b // 8 for b in found.dependent_bits} == {1, 2, 3, 4, 5, 6, 7}
 
-    def test_reports_the_whole_byte_not_the_two_bits_that_vary(self):
-        """Bits 2-7 of the selector byte are constant; the byte is still the field."""
+    def test_reports_only_the_bits_that_move(self):
+        """Claiming the whole byte would claim six constant bits as selector.
+
+        Volkswagen declares `VIN_01_MUX` as two bits and Tesla declares
+        `VCFRONT_LVPowerStateIndex` as five; neither is a byte.
+        """
         found = find_multiplexor(matrix_of(vin_like()))
-        assert found is not None and found.length == 8
+        assert found is not None and found.length == 2
 
     def test_finds_layouts_with_moving_signals(self):
         found = find_multiplexor(matrix_of(two_layouts()))
         assert found is not None
-        assert (found.start_bit, found.length, found.values) == (0, 8, (0, 1))
+        # Byte 0 alternates 0 and 1, so the selector is its lowest bit alone.
+        assert (found.start_bit, found.length, found.values) == (0, 1, (0, 1))
         assert {b // 8 for b in found.dependent_bits} == {1, 2, 3, 4}
 
     def test_random_payloads_have_no_multiplexor(self):
@@ -169,6 +176,51 @@ class TestFindMultiplexor:
     def test_str_lists_the_values(self):
         h = MultiplexHypothesis(0, 8, (0, 1, 2), (200, 200, 200), tuple(range(8, 40)), 600)
         assert str(h) == "8-bit multiplexor @ bit 0: values 0, 1, 2; 32 dependent bits (100.0% of frames)"
+
+
+class TestTrimToMoving:
+    """Narrowing a selector to the bits the trace actually justifies."""
+
+    def test_a_byte_holding_three_values_trims_to_two_bits(self):
+        matrix = matrix_of(vin_like())
+        wide = MultiplexHypothesis(0, 8, (0, 1, 2), (200, 200, 200), (8, 9), 600)
+        tight = trim_to_moving(matrix, wide)
+        assert (tight.start_bit, tight.length) == (0, 2)
+        assert tight.values == (0, 1, 2)
+
+    def test_the_partition_survives_the_trim(self):
+        matrix = matrix_of(vin_like())
+        wide = MultiplexHypothesis(0, 8, (0, 1, 2), (200, 200, 200), (8, 9), 600)
+        tight = trim_to_moving(matrix, wide)
+        assert tight.frames_per_value == (200, 200, 200)
+        assert tight.coverage == 1.0
+
+    def test_dependent_bits_are_carried_through_untouched(self):
+        matrix = matrix_of(vin_like())
+        wide = MultiplexHypothesis(0, 8, (0, 1, 2), (200, 200, 200), (8, 9, 10), 600)
+        assert trim_to_moving(matrix, wide).dependent_bits == (8, 9, 10)
+
+    def test_a_selector_already_the_moving_span_is_left_alone(self):
+        matrix = matrix_of(vin_like())
+        tight = MultiplexHypothesis(0, 2, (0, 1, 2), (200, 200, 200), (8, 9), 600)
+        assert trim_to_moving(matrix, tight) is tight
+
+    def test_a_high_selector_keeps_its_offset(self):
+        """Values 0 and 0x10 in a byte: only bit 4 moves."""
+        payloads = [bytes([0x10 * (i % 2), 0xAA, 0xBB]) for i in range(200)]
+        matrix = matrix_of(payloads)
+        wide = MultiplexHypothesis(0, 8, (0, 16), (100, 100), (8, 9), 200)
+        tight = trim_to_moving(matrix, wide)
+        assert (tight.start_bit, tight.length) == (4, 1)
+        assert tight.values == (0, 1)
+
+    def test_a_gap_between_moving_bits_keeps_the_enclosing_span(self):
+        """Bits 0 and 2 move, bit 1 does not; the field is still three bits."""
+        payloads = [bytes([(0, 1, 4, 5)[i % 4], 0xAA]) for i in range(200)]
+        matrix = matrix_of(payloads)
+        wide = MultiplexHypothesis(0, 8, (0, 1, 4, 5), (50, 50, 50, 50), (8, 9), 200)
+        tight = trim_to_moving(matrix, wide)
+        assert (tight.start_bit, tight.length) == (0, 3)
 
 
 class TestInferMessageIntegration:
