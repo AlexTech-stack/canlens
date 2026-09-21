@@ -63,6 +63,46 @@ def _h2f_states(matrix: np.ndarray, crc_index: int) -> np.ndarray:
     return crc
 
 
+def p22_constant(
+    matrix: np.ndarray, index: int, min_match: float
+) -> ChecksumHypothesis | None:
+    """A Profile 22 whose sixteen Data IDs are all the same byte.
+
+    Volkswagen's MQB bus is Profile 22 in structure -- CRC-8 0x2F over the
+    payload but the CRC byte, then a Data ID appended -- and on many of its
+    messages the whole sixteen-entry list is one repeated value. That is one
+    unknown rather than sixteen, and the difference decides whether the claim
+    can be checked at all: `enough_evidence` asks for more distinct payloads
+    than the secret has bytes, with margin, so a list needs 24 where a
+    constant needs 9.
+
+    It matters because a static message carrying nothing but its counter has
+    exactly 16 distinct payloads. Against sixteen unknowns that is a fit with
+    nothing left over and the list form is rightly refused; against one it is
+    fifteen equations of confirmation. Measured on a Golf Mk7 segment, 13 of
+    the 26 checksums `vw_mqb.dbc` names were being missed and every one of
+    them had exactly 16 distinct payloads.
+
+    No counter is needed, and none is consulted: one constant has to
+    reproduce every frame, which implies it reproduces every counter value's
+    frames. The result is still reported as `e2e_p22`, with the list the data
+    actually supports -- the same byte sixteen times.
+    """
+    if not enough_evidence(matrix, [index], 1):
+        return None
+    states = _h2f_states(matrix, index)
+    stored = matrix[:, index]
+    after = H2F_TABLE[states[None, :] ^ np.arange(256, dtype=np.uint8)[:, None]]
+    rate = ((after ^ np.uint8(H2F_XOR)) == stored[None, :]).mean(axis=1)
+    best = int(rate.argmax())
+    if rate[best] < min_match:
+        return None
+    return ChecksumHypothesis(
+        index, "e2e_p22", float(rate[best]), matrix.shape[0],
+        data_id=int.from_bytes(bytes([best]) * 16, "little"),
+    )
+
+
 def find_p22(
     matrix: np.ndarray,
     counters: Sequence,
@@ -87,21 +127,35 @@ def find_p22(
     Only structure across messages -- or the list being known -- can settle it.
     """
     frames, width = matrix.shape
-    if width < 2 or frames < 16 * min_per_value:
+    if width < 2:
         return []
+    positions = [
+        index
+        for index in (candidate_bytes if candidate_bytes is not None else range(width))
+        if 0 <= index < width
+    ]
+
+    # The constant form first: one unknown clears a far lower evidence bar
+    # than sixteen, and it needs no counter. Bytes it explains are not
+    # offered to the list search.
+    found = []
+    for index in positions:
+        hit = p22_constant(matrix, index, min_match)
+        if hit is not None:
+            found.append(hit)
+    positions = [index for index in positions if index not in {h.byte_index for h in found}]
+
     alive = [c for c in counters if c.length == 4 and c.start_bit % 4 == 0]
-    if not alive:
-        return []
-    positions = candidate_bytes if candidate_bytes is not None else range(width)
+    if not positions or not alive or frames < 16 * min_per_value:
+        return sorted(found, key=lambda h: h.byte_index)
     from ..analyze.bits import BitOrder, bit_matrix_from_bytes
     from .counters import field_values
 
     bits = bit_matrix_from_bytes(matrix, BitOrder.INTEL)
-    found = []
     for counter in alive:
         value = field_values(bits, counter.start_bit, 4)
         for index in positions:
-            if not 0 <= index < width or not enough_evidence(matrix, [index], 16):
+            if not enough_evidence(matrix, [index], 16):
                 continue
             states = _h2f_states(matrix, index)
             stored = matrix[:, index]
@@ -132,7 +186,7 @@ def find_p22(
                 )
             )
             break  # one CRC byte per counter is enough
-    return found
+    return sorted(found, key=lambda h: h.byte_index)
 
 
 def p22_id_list(data_id: int) -> list[int]:

@@ -199,7 +199,7 @@ Thresholds: counters **0.95**, everything else **0.99**.
 
 1. Candidate bytes — mean bit transition rate ≥ 0.20
 2. Counters
-3. Plain checksums (8 algorithms, first that fits wins)
+3. Plain checksums (9 algorithms, first that fits wins)
 4. E2E Profile 1 / 11
 5. Width-gated E2E Profiles 22, 6, 4, 7
 6. CRC-16 (3 variants) and E2E Profile 5

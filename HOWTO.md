@@ -549,7 +549,7 @@ detector existed. A counter that merely has its lowest bit locked to a
 two-frame schedule is kept.
 
 **Checksums** are only reported when a named algorithm *reproduces* the byte.
-The library is `sum8`, `sum8_complement`, `xor8`, `toyota`, and CRC-8 with
+The library is `sum8`, `sum8_complement`, `xor8`, `toyota`, `tesla`, and CRC-8 with
 polynomials 0x07, 0x1D (SAE J1850), and 0x2F; 16-bit CRCs and the AUTOSAR
 E2E Profile 1/11 form with a solved-for Data ID are searched separately. The simplest algorithm that
 works wins, so a plain sum is never dressed up as a CRC.
@@ -559,6 +559,39 @@ the XOR of bytes 0-6, then byte 0 is equally the XOR of bytes 1-7. Every
 position verifies, and a single trace cannot say which one the protocol calls
 the checksum. The last byte is reported by convention and every candidate
 position is kept.
+
+`tesla` was derived from the corpus rather than from a document. Solving for
+the additive constant that reproduces the checksum byte on the eleven messages
+`tesla_model3_party.dbc` names one on gives exactly `(address & 0xFF) +
+(address >> 8)` every time, at a 100% match rate. It differs from `toyota` only
+by the missing length term, and the two can never both fit the same message,
+since a payload length is between 1 and 64 and so never vanishes modulo 256.
+With it, Tesla scores 100% precision and 100% recall against its DBC where it
+previously found nothing at all.
+
+### Volkswagen, and the difference one unknown makes
+
+Volkswagen's MQB bus is AUTOSAR Profile 22 in structure — CRC-8 0x2F over the
+payload but the CRC byte, then a Data ID appended, selected from a sixteen-entry
+list by the counter. canlens already searched for exactly that and still missed
+half of it: 13 of the 26 checksums `vw_mqb.dbc` names on a Golf Mk7 segment.
+
+Every one of the 13 had exactly **16 distinct payloads**. That is not a
+coincidence, it is the shape of a static message whose only moving content is
+its counter — and sixteen unknowns fitted to sixteen equations always fit, so
+the evidence gate refused them, correctly.
+
+What the gate could not see is that on many of those messages the whole
+sixteen-entry list is *one repeated byte*. That is one unknown, not sixteen,
+and fifteen equations of confirmation rather than none. Trying the constant
+form first recovers them and needs no counter at all, since one constant
+reproducing every frame implies it reproduces every counter value's frames.
+
+The messages whose sixteen entries genuinely differ are still refused when all
+they offer is sixteen distinct payloads, and that refusal is right: a single
+segment cannot check them. Corroborating across segments could, because
+different drives carry different content, and that is the obvious next use for
+the corroboration layer.
 
 ### 16-bit CRCs and AUTOSAR E2E Profile 5
 

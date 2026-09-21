@@ -361,3 +361,48 @@ class TestCountersInsideChecksums:
         spans = CounterHypothesis(start_bit=52, length=8, stride=1, match_rate=1.0, frames=10)
         crc = ChecksumHypothesis(byte_index=7, algorithm="crc8_j1850", match_rate=1.0, frames=10)
         assert outside_checksums([keep, drop, spans], [crc], []) == [keep]
+
+
+class TestTeslaChecksum:
+    """Sum of the other bytes folded with the address, and no length term."""
+
+    @staticmethod
+    def frames(address, n=300, width=8, index=0, seed=5):
+        import random as _random
+
+        from canlens.infer.checksums import tesla as _tesla
+
+        rng = _random.Random(seed)
+        out = []
+        for _ in range(n):
+            body = bytearray(rng.randrange(256) for _ in range(width))
+            body[index] = 0
+            body[index] = _tesla(bytes(body), address, index)
+            out.append(bytes(body))
+        return out
+
+    def test_the_constant_is_the_address_folded_in_two(self):
+        from canlens.infer.checksums import tesla
+
+        payload = bytes([0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77])
+        expected = (sum(payload[1:]) + 0x08 + 0x01) & 0xFF
+        assert tesla(payload, 0x108, 0) == expected
+
+    def test_found_on_a_synthetic_tesla_message(self):
+        payloads = self.frames(0x108)
+        found = find_checksums(payloads, 0x108, candidate_bytes=[0])
+        assert [(f.algorithm, f.byte_index) for f in found] == [("tesla", 0)]
+        assert found[0].match_rate == 1.0
+
+    def test_it_is_distinguishable_from_toyota(self):
+        """They differ by the length term, which never vanishes mod 256."""
+        from canlens.infer.checksums import tesla, toyota
+
+        payload = bytes([0] + [0x10] * 7)
+        assert tesla(payload, 0x175, 0) != toyota(payload, 0x175, 0)
+
+    def test_a_plain_sum_is_preferred_where_the_address_adds_nothing(self):
+        """Address 0 folds to 0, so sum8 explains it and wins on simplicity."""
+        payloads = self.frames(0x0000)
+        found = find_checksums(payloads, 0x0000, candidate_bytes=[0])
+        assert [f.algorithm for f in found] == ["sum8"]

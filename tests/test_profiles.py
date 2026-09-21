@@ -18,6 +18,7 @@ from canlens.infer.profiles import (
     applicable,
     find_p22,
     find_wide,
+    p22_constant,
     p22_crc,
     p22_id_list,
     wide_crc,
@@ -171,3 +172,59 @@ class TestApplicability:
         assert [p.name for p in applicable(12, profiles)] == ["a", "b", "c"]
         assert [p.name for p in applicable(64, profiles)] == ["a", "b", "c", "d"]
         assert applicable(1, profiles) == []
+
+
+class TestP22Constant:
+    """Volkswagen MQB: Profile 22 whose sixteen Data IDs are one repeated byte."""
+
+    @staticmethod
+    def frames(magic=0xFB, n=400, width=8, crc_index=0, distinct=True, seed=3):
+        rng = random.Random(seed)
+        out = []
+        for i in range(n):
+            body = bytearray(rng.randrange(256) if distinct else 0 for _ in range(width))
+            body[1] = (body[1] & 0xF0) | (i % 16)
+            body[crc_index] = p22_crc(bytes(body), crc_index, magic)
+            out.append(bytes(body))
+        return as_matrix(out)
+
+    def test_solves_the_repeated_data_id(self):
+        found = p22_constant(self.frames(magic=0xFB), 0, 0.99)
+        assert found is not None
+        assert found.algorithm == "e2e_p22" and found.match_rate == 1.0
+        assert p22_id_list(found.data_id) == [0xFB] * 16
+
+    def test_found_without_any_counter_being_known(self):
+        """One constant has to reproduce every frame, so no counter is needed."""
+        found = find_p22(self.frames(), [], candidate_bytes=[0])
+        assert [f.byte_index for f in found] == [0]
+        assert p22_id_list(found[0].data_id) == [0xFB] * 16
+
+    def test_a_short_trace_is_still_enough(self):
+        """The list form needs 64 frames; one constant does not."""
+        found = find_p22(self.frames(n=40), [], candidate_bytes=[0])
+        assert len(found) == 1
+
+    def test_a_message_with_too_few_distinct_payloads_is_refused(self):
+        """Nine distinct contents are the bar for a one-byte secret."""
+        matrix = self.frames(n=400, distinct=False)  # only the counter moves: 16 contents
+        assert p22_constant(matrix[:8], 0, 0.99) is None
+
+    def test_the_wrong_constant_does_not_fit(self):
+        found = p22_constant(self.frames(magic=0x11), 0, 0.99)
+        assert found is not None and p22_id_list(found.data_id) == [0x11] * 16
+
+    def test_random_bytes_are_not_a_profile_22(self):
+        rng = random.Random(9)
+        matrix = as_matrix([bytes(rng.randrange(256) for _ in range(8)) for _ in range(400)])
+        assert p22_constant(matrix, 0, 0.99) is None
+
+    def test_a_real_sixteen_entry_list_still_needs_the_list_form(self):
+        """A constant must not be reported where the entries genuinely differ."""
+        ids = [0x10 + i for i in range(16)]
+        payloads = p22_frames(ids)
+        matrix = as_matrix(payloads)
+        assert p22_constant(matrix, 0, 0.99) is None
+        counters = find_counters(bit_matrix(payloads, 8, BitOrder.INTEL))
+        found = find_p22(matrix, counters)
+        assert found and p22_id_list(found[0].data_id) == ids
