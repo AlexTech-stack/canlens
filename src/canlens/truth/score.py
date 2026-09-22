@@ -176,9 +176,11 @@ def claimed_fields(inference: MessageInference) -> dict[FieldKind, list[tuple[tu
         out[FieldKind.COUNTER].append((bits, f"{counter.length}bit@{counter.start_bit}"))
 
     for checksum in inference.checksums:
-        start = checksum.byte_index * 8
+        # start_bit and length rather than the byte index: Honda's checksum is
+        # four bits, and claiming the whole byte would claim the counter beside it.
+        bits = tuple(range(checksum.start_bit, checksum.start_bit + checksum.length))
         out[FieldKind.CHECKSUM].append(
-            (tuple(range(start, start + 8)), f"{checksum.algorithm}@byte{checksum.byte_index}")
+            (bits, f"{checksum.algorithm}@byte{checksum.byte_index}")
         )
     for crc in inference.crc16s:
         start = crc.start_byte * 8

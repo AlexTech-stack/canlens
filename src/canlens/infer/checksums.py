@@ -64,6 +64,77 @@ def tesla(payload: bytes, address: int, index: int) -> int:
     ) & 0xFF
 
 
+def address_nibbles(address: int) -> int:
+    """Sum of an identifier's hexadecimal digits."""
+    total = 0
+    while address > 0:
+        total += address & 0xF
+        address >>= 4
+    return total
+
+
+def honda_nibble(payload: bytes, address: int, index: int = -1) -> int:
+    """Honda's 4-bit checksum, in the low nibble of the last byte.
+
+    Every nibble of the identifier and of the payload is summed, except the
+    checksum nibble itself, and the total is subtracted from 8. `index` is
+    accepted for signature compatibility with the byte-wide algorithms and
+    ignored: the position is part of the scheme, not a search parameter.
+
+    Derived from openpilot's implementation and checked against the corpus,
+    where it reproduces 1115 of 1195 messages across ten Honda and Acura
+    platforms -- 95% to 99% per platform. canlens explained 3% of Honda
+    traffic before it existed, because every other search here is byte-wide
+    and this field is half a byte.
+    """
+    total = address_nibbles(address)
+    for position, byte in enumerate(payload):
+        if position == len(payload) - 1:
+            total += byte >> 4  # the low nibble is the checksum itself
+        else:
+            total += (byte >> 4) + (byte & 0xF)
+    return (8 - total) & 0xF
+
+
+def v_honda_nibble(matrix: np.ndarray, address: int) -> np.ndarray:
+    """Vectorised twin of `honda_nibble`, over an (n, width) byte matrix."""
+    if matrix.shape[1] == 0:
+        return np.zeros(matrix.shape[0], dtype=np.uint8)
+    high = (matrix >> 4).sum(axis=1, dtype=np.int64)
+    low = (matrix[:, :-1] & 0x0F).sum(axis=1, dtype=np.int64)
+    return ((8 - (high + low + address_nibbles(address))) & 0xF).astype(np.uint8)
+
+
+def find_honda_nibble(
+    matrix: np.ndarray, address: int, *, min_match: float = 0.99
+) -> ChecksumHypothesis | None:
+    """Look for Honda's nibble checksum in the low half of the last byte.
+
+    One position and one algorithm, with nothing to solve for -- but the field
+    is only four bits wide, so a message that never changes matches a constant
+    by coincidence one time in sixteen. Measured over the corpus before this
+    gate existed, 1350 of 3325 claims rested on fewer than eight distinct
+    payloads, and every claim outside Honda was on a message with exactly one.
+    Nine distinct payloads is what four bits need; see `checks_needed`.
+    """
+    frames, width = matrix.shape
+    if frames < 8 or width < 2:
+        return None
+    if distinct_contents(matrix, []) < checks_needed(4):
+        return None
+    rate = float((v_honda_nibble(matrix, address) == (matrix[:, -1] & 0x0F)).mean())
+    if rate < min_match:
+        return None
+    return ChecksumHypothesis(
+        byte_index=width - 1,
+        algorithm="honda_nibble",
+        match_rate=rate,
+        frames=frames,
+        bit_offset=0,
+        bit_width=4,
+    )
+
+
 def _crc8(data: bytes, poly: int, init: int, xorout: int) -> int:
     crc = init
     for byte in data:
@@ -182,6 +253,24 @@ VECTOR_ALGORITHMS: dict[str, VectorFn] = {
 # makes a coincidental fit improbable rather than merely non-trivial.
 MIN_EQUATIONS = 8
 
+# An algorithm with nothing to solve for needs a different bar. Each distinct
+# payload it reproduces is one independent check worth as many bits as the
+# field is wide, so the chance of a wrong algorithm surviving k of them is
+# about 2**(-width * k). Asking for 32 bits of agreement beyond the first
+# check puts that below one in four billion: five distinct payloads for a
+# byte, nine for a nibble.
+#
+# MIN_EQUATIONS is the wrong bar here, and measurably so. It is sized for a
+# solved secret, and requiring eight of them for byte-wide checksums cost
+# five findings the DBCs confirm while still being too lenient at four bits.
+# The difference is the field width, so the rule uses it.
+MIN_CHECK_BITS = 32
+
+
+def checks_needed(bit_width: int) -> int:
+    """Distinct payloads a fixed algorithm must reproduce to be believed."""
+    return max(2, -(-MIN_CHECK_BITS // max(bit_width, 1)) + 1)
+
 
 def distinct_contents(matrix: np.ndarray, skip: Sequence[int]) -> int:
     """How many distinct payloads there are once the CRC bytes are removed."""
@@ -220,14 +309,20 @@ class ChecksumHypothesis:
     # byte 0 is equally the XOR of bytes 1-7, so every position "verifies" and
     # the trace alone cannot say which byte the protocol calls the checksum.
     ambiguous_positions: tuple[int, ...] = ()
+    # Where inside the byte the checksum sits, and how wide it is. Honda
+    # protects a message with four bits, not eight, so a byte index alone
+    # cannot say what is claimed -- and the other nibble of that byte is
+    # ordinary data that other detectors must stay free to explain.
+    bit_offset: int = 0
+    bit_width: int = 8
 
     @property
     def start_bit(self) -> int:
-        return self.byte_index * 8
+        return self.byte_index * 8 + self.bit_offset
 
     @property
     def length(self) -> int:
-        return 8
+        return self.bit_width
 
     @property
     def ambiguous(self) -> bool:
@@ -239,6 +334,8 @@ class ChecksumHypothesis:
             if self.ambiguous
             else f"byte {self.byte_index}"
         )
+        if self.bit_width != 8:
+            where += f" bits {self.bit_offset}-{self.bit_offset + self.bit_width - 1}"
         if self.data_id is None:
             ident = ""
         elif self.algorithm == "e2e_p22":
@@ -305,6 +402,12 @@ def find_checksums(
     hits: dict[str, list[tuple[int, float]]] = {}
     for index in positions:
         if not 0 <= index < width:
+            continue
+        # A message that never changes has a constant checksum byte, and any
+        # algorithm producing that constant "reproduces" it on every frame
+        # without being checked once. One equation is not evidence, whatever
+        # the match rate says.
+        if distinct_contents(blob, [index]) < checks_needed(8):
             continue
         for name, fn in VECTOR_ALGORITHMS.items():
             if float((fn(screen, address, index) == screen[:, index]).mean()) < min_match:

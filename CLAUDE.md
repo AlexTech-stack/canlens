@@ -109,8 +109,8 @@ this layer replaces. Every detector verifies against the trace and carries its m
 Counters need 0.95, everything else 0.99.
 
 **3. Detector order in `_build()` is load-bearing.** `infer/message.py` runs candidate bytes →
-counters → plain checksums → E2E 1/11 → width-gated E2E 22/6/4/7 → CRC-16 and E2E 5 →
-multiplexor → two counter cleanups. Each stage receives only the byte positions nothing simpler
+counters → plain checksums → Honda's nibble → E2E 1/11 → width-gated E2E 22/6/4/7 → CRC-16
+and E2E 5 → multiplexor → two counter cleanups. Each stage receives only the byte positions nothing simpler
 has explained. Reordering changes results; a plain sum would get reported as an exotic CRC.
 
 **4. Echoes are not data.** `CanData.src >= 128` marks a frame the device itself put on the

@@ -14,6 +14,8 @@ from .checksums import (
     e2e_crc8,
     find_checksums,
     find_e2e_crc8,
+    find_honda_nibble,
+    honda_nibble,
     p01_low_id,
     score_algorithm,
 )
@@ -62,7 +64,9 @@ __all__ = [
     "find_counters",
     "find_crc16",
     "find_e2e_crc8",
+    "find_honda_nibble",
     "find_multiplexor",
+    "honda_nibble",
     "infer_cached",
     "infer_frames",
     "infer_frameset",

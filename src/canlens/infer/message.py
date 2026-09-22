@@ -21,7 +21,12 @@ from ..analyze.bits import (
 )
 from ..decode import CanFrame, iter_frames, load_frames
 from ..decode.frameset import FrameSet, Message
-from .checksums import ChecksumHypothesis, find_checksums, find_e2e_crc8
+from .checksums import (
+    ChecksumHypothesis,
+    find_checksums,
+    find_e2e_crc8,
+    find_honda_nibble,
+)
 from .counters import CounterHypothesis, find_counters
 from .crc16 import Crc16Hypothesis, find_crc16
 from .multiplex import MultiplexHypothesis, find_multiplexor
@@ -116,6 +121,10 @@ def _build(
     checksum and CRC searches score every frame at once against it, so handing
     over the one the caller already has avoids rebuilding it per message.
     """
+    if byte_matrix is None:
+        from .checksums import as_matrix
+
+        byte_matrix = as_matrix(payloads)
     candidates = set(checksum_candidate_bytes(bits))
     crc16_candidates = set(checksum_candidate_bytes(bits, min_rate=CRC16_BYTE_MIN_RATE))
     counters = find_counters(matrix, **kwargs.get("counter_options", {}))
@@ -126,14 +135,16 @@ def _build(
         matrix=byte_matrix,
         **kwargs.get("checksum_options", {}),
     )
-    # The E2E forms need the byte matrix and, for Profile 1 ALT, the alive
-    # counter's parity; they are tried only where the plain forms found nothing.
-    # The matrix is built here when the caller had none, so the object path
-    # and the columnar path cannot disagree about what a message contains.
-    if byte_matrix is None:
-        from .checksums import as_matrix
+    # Honda's checksum is four bits in the low nibble of the last byte, which
+    # no byte-wide search can see. Tried only where nothing wider explained
+    # that byte, so the simpler explanation still wins when there is one.
+    if width - 1 not in {c.byte_index for c in checksums}:
+        nibble = find_honda_nibble(byte_matrix, address)
+        if nibble is not None:
+            checksums.append(nibble)
 
-        byte_matrix = as_matrix(payloads)
+    # The E2E forms are tried only where the plain forms found nothing, so
+    # that the simplest algorithm which fits is always the one reported.
     explained = {c.byte_index for c in checksums}
     alive = next(((c.start_bit, c.length) for c in counters if c.length == 4), None)
     checksums += find_e2e_crc8(
@@ -213,6 +224,10 @@ def outside_checksums(
 ) -> list[CounterHypothesis]:
     """Drop counters that live inside a byte a checksum already explains.
 
+    Bit-granular, not byte-granular, because Honda's checksum is half a byte:
+    the other nibble of that byte is ordinary data and often carries the
+    counter, which must stay reportable.
+
     A CRC is linear over GF(2), so when the only thing moving in a message is
     its alive counter the CRC byte is an affine image of that counter -- and
     two of its bits can walk 0..3 as faithfully as any real counter. Every
@@ -222,14 +237,12 @@ def outside_checksums(
     not also a counter. The unfiltered list still feeds the E2E searches
     above, which only ever read the 4-bit alive counter.
     """
-    explained: set[int] = {c.byte_index for c in checksums}
+    explained: set[int] = set()
+    for check in checksums:
+        explained.update(range(check.start_bit, check.start_bit + check.length))
     for crc in crc16s:
-        explained.update(range(crc.start_byte, crc.start_byte + crc.nbytes))
-    return [
-        c
-        for c in counters
-        if not explained & set(range(c.start_bit // 8, (c.start_bit + c.length - 1) // 8 + 1))
-    ]
+        explained.update(range(crc.start_byte * 8, (crc.start_byte + crc.nbytes) * 8))
+    return [c for c in counters if not explained & set(range(c.start_bit, c.end_bit))]
 
 
 def infer_message_columnar(

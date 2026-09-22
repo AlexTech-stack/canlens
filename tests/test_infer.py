@@ -406,3 +406,137 @@ class TestTeslaChecksum:
         payloads = self.frames(0x0000)
         found = find_checksums(payloads, 0x0000, candidate_bytes=[0])
         assert [f.algorithm for f in found] == ["sum8"]
+
+
+class TestHondaNibbleChecksum:
+    """Four bits in the low nibble of the last byte, not a whole byte."""
+
+    @staticmethod
+    def frames(address, n=300, width=8, seed=11):
+        import random as _random
+
+        from canlens.infer.checksums import honda_nibble as _honda
+
+        rng = _random.Random(seed)
+        out = []
+        for _ in range(n):
+            body = bytearray(rng.randrange(256) for _ in range(width))
+            body[-1] &= 0xF0
+            body[-1] |= _honda(bytes(body), address)
+            out.append(bytes(body))
+        return out
+
+    def test_matches_openpilots_definition(self):
+        from canlens.infer.checksums import address_nibbles, honda_nibble
+
+        payload = bytes([0x12, 0x34, 0x56, 0x70])
+        total = address_nibbles(0x1EA)
+        total += 0x1 + 0x2 + 0x3 + 0x4 + 0x5 + 0x6 + 0x7  # last byte: high nibble only
+        assert honda_nibble(payload, 0x1EA) == (8 - total) & 0xF
+
+    def test_the_address_contributes_its_hex_digits(self):
+        from canlens.infer.checksums import address_nibbles
+
+        assert address_nibbles(0x1EA) == 1 + 0xE + 0xA
+        assert address_nibbles(0) == 0
+
+    def test_vectorised_matches_the_scalar(self):
+        import numpy as np
+
+        from canlens.infer.checksums import as_matrix, honda_nibble, v_honda_nibble
+
+        payloads = self.frames(0x1EA)
+        matrix = as_matrix(payloads)
+        scalar = np.array([honda_nibble(p, 0x1EA) for p in payloads], dtype=np.uint8)
+        assert (v_honda_nibble(matrix, 0x1EA) == scalar).all()
+
+    def test_found_on_a_synthetic_honda_message(self):
+        from canlens.infer.checksums import as_matrix, find_honda_nibble
+
+        found = find_honda_nibble(as_matrix(self.frames(0x1EA)), 0x1EA)
+        assert found is not None
+        assert found.algorithm == "honda_nibble" and found.match_rate == 1.0
+
+    def test_it_claims_four_bits_not_eight(self):
+        from canlens.infer.checksums import as_matrix, find_honda_nibble
+
+        found = find_honda_nibble(as_matrix(self.frames(0x1EA, width=8)), 0x1EA)
+        assert (found.start_bit, found.length) == (56, 4)
+        assert "bits 0-3" in str(found)
+
+    def test_the_wrong_address_does_not_fit(self):
+        from canlens.infer.checksums import as_matrix, find_honda_nibble
+
+        assert find_honda_nibble(as_matrix(self.frames(0x1EA)), 0x1EB) is None
+
+    def test_random_payloads_are_not_a_honda_checksum(self):
+        import random as _random
+
+        from canlens.infer.checksums import as_matrix, find_honda_nibble
+
+        rng = _random.Random(3)
+        payloads = [bytes(rng.randrange(256) for _ in range(8)) for _ in range(300)]
+        assert find_honda_nibble(as_matrix(payloads), 0x1EA) is None
+
+    def test_a_counter_in_the_other_nibble_survives(self):
+        """The high nibble of that byte is data, and Honda often counts there."""
+        from canlens.infer.checksums import honda_nibble
+
+        payloads = []
+        rng_body = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60]
+        for i in range(400):
+            body = bytearray(rng_body + [0x00, (i % 16) << 4])
+            body[-1] |= honda_nibble(bytes(body), 0x1EA)
+            payloads.append(bytes(body))
+        found = infer_message(payloads, bus=1, address=0x1EA)
+        assert [c.algorithm for c in found.checksums] == ["honda_nibble"]
+        assert (60, 4) in [(c.start_bit, c.length) for c in found.counters]
+
+
+class TestChecksumEvidence:
+    """A constant byte reproduced by a constant is not a checked hypothesis."""
+
+    def test_the_bar_follows_the_field_width(self):
+        """Each distinct payload is one check worth as many bits as the field."""
+        from canlens.infer.checksums import checks_needed
+
+        assert checks_needed(4) == 9
+        assert checks_needed(8) == 5
+        assert checks_needed(16) == 3
+        assert checks_needed(64) == 2  # never fewer than two
+
+    @staticmethod
+    def static_frames(address, n=300, width=8):
+        from canlens.infer.checksums import honda_nibble, toyota
+
+        body = bytearray([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00])
+        body[-1] = (body[-1] & 0xF0) | honda_nibble(bytes(body), address)
+        honda = [bytes(body)] * n
+        plain = bytearray([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0])
+        plain[7] = toyota(bytes(plain), address, 7)
+        return honda, [bytes(plain)] * n
+
+    def test_a_static_message_yields_no_nibble_checksum(self):
+        from canlens.infer.checksums import as_matrix, find_honda_nibble
+
+        honda, _ = self.static_frames(0x1EA)
+        assert find_honda_nibble(as_matrix(honda), 0x1EA) is None
+
+    def test_a_static_message_yields_no_byte_checksum(self):
+        _honda, plain = self.static_frames(0x2C1)
+        assert find_checksums(plain, 0x2C1, candidate_bytes=[7]) == []
+
+    def test_the_same_algorithm_is_found_once_the_payload_moves(self):
+        """The gate is about evidence, not about the algorithm being wrong."""
+        import random as _random
+
+        from canlens.infer.checksums import as_matrix, find_honda_nibble, honda_nibble
+
+        rng = _random.Random(2)
+        payloads = []
+        for _ in range(200):
+            body = bytearray(rng.randrange(256) for _ in range(8))
+            body[-1] = (body[-1] & 0xF0) | honda_nibble(bytes(body), 0x1EA)
+            payloads.append(bytes(body))
+        found = find_honda_nibble(as_matrix(payloads), 0x1EA)
+        assert found is not None and found.match_rate == 1.0

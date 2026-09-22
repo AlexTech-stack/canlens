@@ -549,7 +549,8 @@ detector existed. A counter that merely has its lowest bit locked to a
 two-frame schedule is kept.
 
 **Checksums** are only reported when a named algorithm *reproduces* the byte.
-The library is `sum8`, `sum8_complement`, `xor8`, `toyota`, `tesla`, and CRC-8 with
+The library is `sum8`, `sum8_complement`, `xor8`, `toyota`, `tesla`, Honda's
+4-bit `honda_nibble`, and CRC-8 with
 polynomials 0x07, 0x1D (SAE J1850), and 0x2F; 16-bit CRCs and the AUTOSAR
 E2E Profile 1/11 form with a solved-for Data ID are searched separately. The simplest algorithm that
 works wins, so a plain sum is never dressed up as a CRC.
@@ -559,6 +560,49 @@ the XOR of bytes 0-6, then byte 0 is equally the XOR of bytes 1-7. Every
 position verifies, and a single trace cannot say which one the protocol calls
 the checksum. The last byte is reported by convention and every candidate
 position is kept.
+
+### Honda protects a message with four bits
+
+Every search above is byte-wide, and Honda's checksum is half a byte: a sum
+over every nibble of the identifier and the payload, subtracted from 8 and
+written into the low nibble of the last byte. canlens could not see it however
+long it looked, and Honda was the starkest gap in the corpus — 97% of its
+messages carried a byte that moved like a checksum with nothing to explain it.
+
+Implemented from openpilot's description, it reproduces Honda traffic on sight.
+Coverage across the 25 Honda and Acura platforms goes from 3% to 64%, and on a
+single platform tested directly against every message it reaches 95–99%.
+
+It also forced two things wider than itself. A checksum hypothesis now carries
+a bit offset and width, because a byte index cannot describe half a byte, and
+the filter that drops counters inside checksum bytes became bit-granular — the
+*other* nibble of that byte is ordinary data, and Honda often counts there.
+
+### A constant is not a check
+
+The nibble detector immediately claimed messages on Ford, GM and Mazda. Every
+one was a message with a single distinct payload: the field never changes, so
+a constant matches a constant, and with four bits that happens one time in
+sixteen by chance. Corpus-wide, 1350 of 3325 nibble claims rested on fewer
+than eight distinct payloads.
+
+Checking the byte-wide algorithms found the same flaw, smaller only because
+eight bits make a coincidence sixteen times rarer. Both searches now require
+enough distinct payloads for the match to *be* evidence.
+
+How many is enough depends on the width. Each distinct payload a fixed
+algorithm reproduces is one independent check worth as many bits as the field,
+so the chance of a wrong algorithm surviving k of them is about
+2⁻ʷᵏ. Asking for 32 bits of agreement beyond the first check gives five
+distinct payloads for a byte and nine for a nibble. `MIN_EQUATIONS` is the
+wrong bar here — it is sized for a *solved secret*, and using it cost findings
+at eight bits while staying too lenient at four.
+
+The gate costs something real and it is worth stating: five checksums the DBCs
+confirm are no longer reported, because those messages carry fewer than five
+distinct payloads and the trace genuinely cannot check them. The scored set
+under-represents the benefit, since it contains none of the platforms where the
+false positives were.
 
 `tesla` was derived from the corpus rather than from a document. Solving for
 the additive constant that reproduces the checksum byte on the eleven messages

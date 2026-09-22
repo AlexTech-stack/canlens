@@ -32,7 +32,7 @@ from ..decode.cache import Source, cache_path
 from .message import MessageInference, infer_frameset
 
 # Bump on any change to what infer would conclude about the same frames.
-INFER_VERSION = 11
+INFER_VERSION = 14
 
 
 @dataclass(frozen=True)
