@@ -501,6 +501,40 @@ better recorded than discovered.
 bits, because bits 6 and 7 flip too rarely in two hundred frames to be evidence
 of anything. Longer traces push that out; they do not remove it.
 
+### More drives, more range
+
+That second limit is the one the corpus can attack. A field's high bits only
+move once the value grows large enough to reach them, so one drive shows one
+drive's worth of range. `canlens corroborate-pooled` reads a platform's
+signals from every local segment at once, laying the frames end to end — not
+deduplicating them, which is right for a secret that needs distinct payloads
+and wrong for a signal, whose transition rates are read from consecutive
+frames.
+
+Over the Volkswagen group and Rivian, twenty segments against one takes
+precision from 68% to 70% and recall from 58% to 60%. The headline gain is not
+the rates but the coverage: **360 correct claims become 460**, because fields
+that never moved on one drive move somewhere across twenty.
+
+### The C-variable prior, tested and rejected
+
+Signals are packed C variables, so widths of 1, 2, 4, 8, 16 and 32 bits should
+dominate — and across every local DBC they do, at 86% of all signals. It is
+tempting to round an unbounded width up to the next of those.
+
+Measured, it is wrong far more often than right. Rounding up drops the score
+from 0.63 to 0.27 on F1; even restricted to gaps of a single bit it is correct
+12% of the time. Two reasons. The gap between what moves and what is declared
+is usually five to seven bits, not one, so the next C width is rarely the
+answer. And the prior does not survive the subset that matters: of the signals
+canlens can actually see — the ones whose bits move — only 46% have a C-typical
+width, because the wide majority of 1- and 2-bit fields are flags and enums
+that sit still, while the ones that move are physical quantities scaled to fit,
+at 9, 10, 12 or 13 bits.
+
+The prior is real. It is just not a prior about the signals a trace can show
+you.
+
 ### What is and is not claimed
 
 **Counters** must advance by a constant step *and* walk their whole range. Two

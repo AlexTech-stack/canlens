@@ -18,6 +18,7 @@ from canlens.corroborate.pooled import (
     Pool,
     corroborate_p22,
     evidence_growth,
+    pool_frames,
     pool_message,
     solve_p22,
     unique_rows,
@@ -285,3 +286,48 @@ class TestScopeOfPooling:
         assert enough_evidence(matrix, [0], 1)   # Profile 1/11, needs 9
         assert enough_evidence(matrix, [0], 2)   # Profile 5, needs 10
         assert not enough_evidence(matrix, [0], 16)  # Profile 22, needs 24
+
+
+class TestPoolFrames:
+    """Signals need frames in order, not distinct contents."""
+
+    def test_segments_are_laid_end_to_end_without_deduplication(self, tmp_path):
+        traces = {
+            "a/r/1": frames_of(p22_payloads(n=64, seed=1)),
+            "b/r/1": frames_of(p22_payloads(n=64, seed=2)),
+        }
+        pooled = pool_frames(
+            list(traces), {(0, 0x120)}, root=str(tmp_path),
+            load=lambda path, root: traces[path],
+        )
+        matrix, devices = pooled[(0, 0x120)]
+        assert matrix.shape[0] == 128 and devices == 2
+
+    def test_repeated_payloads_survive(self, tmp_path):
+        """Deduplicating would turn a quiet field into a busy one."""
+        same = [bytes([0, 0xA0, 0, 0, 0, 0, 0, 0])] * 80
+        traces = {"a/r/1": frames_of(same)}
+        pooled = pool_frames(
+            list(traces), {(0, 0x120)}, root=str(tmp_path),
+            load=lambda path, root: traces[path],
+        )
+        assert pooled[(0, 0x120)][0].shape[0] == 80
+
+    def test_segments_of_a_different_width_are_not_mixed(self, tmp_path):
+        traces = {
+            "a/r/1": frames_of(p22_payloads(n=64, width=8, seed=1)),
+            "b/r/1": frames_of(p22_payloads(n=64, width=6, seed=2)),
+        }
+        pooled = pool_frames(
+            list(traces), {(0, 0x120)}, root=str(tmp_path),
+            load=lambda path, root: traces[path],
+        )
+        assert pooled[(0, 0x120)][0].shape == (64, 8)
+
+    def test_a_key_nobody_carries_is_absent(self, tmp_path):
+        traces = {"a/r/1": frames_of(p22_payloads(n=64))}
+        pooled = pool_frames(
+            list(traces), {(3, 0x999)}, root=str(tmp_path),
+            load=lambda path, root: traces[path],
+        )
+        assert pooled == {}

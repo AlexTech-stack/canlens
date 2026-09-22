@@ -194,6 +194,106 @@ def pool_message(
     return pools.get(key)
 
 
+def pool_frames(
+    paths: Sequence[str],
+    keys: set[tuple[int, int]] | frozenset[tuple[int, int]],
+    *,
+    root: str,
+    min_frames: int = 32,
+    load: Callable[..., FrameSet] | None = None,
+) -> dict[tuple[int, int], tuple[np.ndarray, int]]:
+    """One message's frames across several segments, still in order.
+
+    The deduplication `pool_messages` does is right for a secret that has to
+    be constrained by distinct payloads, and wrong for a signal: transition
+    rates are read from consecutive frames, and removing repeats would turn a
+    quiet field into a busy one. So the segments are simply laid end to end.
+    Each join adds one transition that never happened, which against tens of
+    thousands of frames changes no rate that matters.
+
+    Returns the matrix and the number of devices behind it.
+    """
+    from ..decode import load_frames
+
+    loader = load or load_frames
+    blocks: dict[tuple[int, int], list[np.ndarray]] = {}
+    devices: dict[tuple[int, int], set[str]] = {}
+    widths: dict[tuple[int, int], int] = {}
+    for path in paths:
+        try:
+            trace = loader(path, root=root)
+        except (OSError, ValueError):
+            continue
+        for message in trace.group(min_frames=min_frames):
+            key = (message.bus, message.address)
+            if key not in keys or widths.setdefault(key, message.width) != message.width:
+                continue
+            blocks.setdefault(key, []).append(message.bytes_matrix())
+            devices.setdefault(key, set()).add(device_of(path))
+    return {
+        key: (np.vstack(parts), len(devices[key])) for key, parts in blocks.items()
+    }
+
+
+def signals_across(
+    platform: str,
+    *,
+    root: str,
+    limit: int | None = None,
+    min_devices: int = MIN_DEVICES,
+    progress: Callable[[int, int], None] | None = None,
+) -> dict[tuple[int, int], list]:
+    """Signal boundaries read from every segment of a platform at once.
+
+    A field's high bits only move when the value grows large enough to reach
+    them, so one drive shows one drive's worth of range. Twenty segments of
+    the Volkswagen group and Rivian, scored against opendbc, take signal
+    detection from 68% precision and 58% recall to 70% and 60% -- and, more
+    usefully, from 360 correct claims to 460, because fields that never moved
+    in a single drive move somewhere across twenty.
+    """
+    from ..corpus import Manifest, inventory
+    from ..infer import infer_cached
+    from ..infer.signals import find_signals
+
+    held = inventory(root, Manifest.load(f"{root}/database.json")).get(platform)
+    paths = list(held.paths if held else [])[:limit]
+    if len(paths) < min_devices:
+        return {}
+
+    claimed: dict[tuple[int, int], set[int]] = {}
+    for path in paths:
+        for message in infer_cached(path, root=root):
+            spoken = claimed.setdefault(message.key, set())
+            for counter in message.counters:
+                spoken.update(range(counter.start_bit, counter.end_bit))
+            for check in message.checksums:
+                spoken.update(range(check.start_bit, check.start_bit + check.length))
+            for crc in message.crc16s:
+                spoken.update(range(crc.start_byte * 8, (crc.start_byte + crc.nbytes) * 8))
+            if message.multiplexor is not None:
+                spoken.update(
+                    range(message.multiplexor.start_bit, message.multiplexor.end_bit)
+                )
+
+    from ..analyze.bits import BitOrder, bit_matrix_from_bytes
+
+    pooled = pool_frames(paths, set(claimed), root=root, load=None)
+    out = {}
+    for done, (key, (matrix, devices)) in enumerate(sorted(pooled.items()), start=1):
+        if progress is not None:
+            progress(done, len(pooled))
+        if devices < min_devices:
+            continue
+        found = find_signals(
+            bit_matrix_from_bytes(matrix, BitOrder.INTEL),
+            claimed_bits=claimed.get(key, set()),
+        )
+        if found:
+            out[key] = found
+    return out
+
+
 def solve_p22(pool: Pool, *, min_match: float = 0.99, min_devices: int = MIN_DEVICES) -> list[ChecksumHypothesis]:
     """Run the Profile 22 list search over a pool's distinct payloads.
 

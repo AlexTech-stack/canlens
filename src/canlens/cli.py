@@ -349,8 +349,15 @@ def cmd_corroborate_pooled(args) -> int:
         args.platform, root=args.root, limit=args.limit,
         min_devices=args.min_devices, progress=progress,
     )
+    from .corroborate import signals_across
+
+    pooled_signals = signals_across(
+        args.platform, root=args.root, limit=args.limit, min_devices=args.min_devices
+    )
     if not found:
-        return _no_pooled_findings(args)
+        code = _no_pooled_findings(args)
+        _report_pooled_signals(pooled_signals)
+        return code
     needed = [f for f in found if f.settled_by_pooling]
     print(
         f"\n{args.platform}: {len(found)} Profile 22 lists solved from pooled segments, "
@@ -368,7 +375,22 @@ def cmd_corroborate_pooled(args) -> int:
     if needed:
         print("\n* marks a list only the pool could settle; the rest a rich enough "
               "single\n  segment could also have reached.")
+    _report_pooled_signals(pooled_signals)
     return 0
+
+
+def _report_pooled_signals(pooled) -> None:
+    """Signal boundaries read from every segment at once."""
+    if not pooled:
+        return
+    total = sum(len(v) for v in pooled.values())
+    bounded = sum(1 for v in pooled.values() for s in v if s.bounded)
+    print(
+        f"\n{total} signals over {len(pooled)} messages, from every segment pooled: "
+        f"{bounded} with a settled width, {total - bounded} lower bounds."
+    )
+    print("  A field's high bits only move once the value reaches them, so more")
+    print("  drives means more of the range seen and fewer widths left open.")
 
 
 def _no_pooled_findings(args) -> int:
