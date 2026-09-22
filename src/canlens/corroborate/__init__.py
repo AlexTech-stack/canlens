@@ -26,6 +26,17 @@ from .consensus import (
     corroborate_platform,
     device_of,
 )
+from .pooled import (
+    Pool,
+    PooledFinding,
+    corroborate_p22,
+    evidence_growth,
+    pool_message,
+    pool_messages,
+    solve_p22,
+    unique_rows,
+    would_pass_alone,
+)
 
 __all__ = [
     "ESTABLISHED_SUPPORT",
@@ -39,8 +50,17 @@ __all__ = [
     "MessageConsensus",
     "MultiplexConsensus",
     "PlatformConsensus",
+    "Pool",
+    "PooledFinding",
     "Tier",
     "corroborate",
+    "corroborate_p22",
     "corroborate_platform",
     "device_of",
+    "evidence_growth",
+    "pool_message",
+    "pool_messages",
+    "solve_p22",
+    "unique_rows",
+    "would_pass_alone",
 ]

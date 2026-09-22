@@ -318,6 +318,46 @@ def cmd_export_pdu_db(args) -> int:
     return 0
 
 
+def cmd_corroborate_pooled(args) -> int:
+    """Profile 22 Data ID lists that only several segments together can settle."""
+    from .corroborate import corroborate_p22
+    from .infer.profiles import p22_id_list
+
+    def progress(done: int, total: int) -> None:
+        if done % 10 == 0 or done == total:
+            print(f"  {done}/{total} candidate messages", file=sys.stderr, flush=True)
+
+    found = corroborate_p22(
+        args.platform, root=args.root, limit=args.limit,
+        min_devices=args.min_devices, progress=progress,
+    )
+    if not found:
+        print(
+            f"canlens: nothing for {args.platform} -- pooling needs several segments from "
+            f"several devices ('canlens corpus fetch {args.platform}')",
+            file=sys.stderr,
+        )
+        return 1
+    needed = [f for f in found if f.settled_by_pooling]
+    print(
+        f"\n{args.platform}: {len(found)} Profile 22 lists solved from pooled segments, "
+        f"{len(needed)} of which no single segment carried enough evidence for\n"
+    )
+    for finding in sorted(found, key=lambda f: (not f.settled_by_pooling, f.pool.bus, f.pool.address)):
+        mark = "*" if finding.settled_by_pooling else " "
+        print(f"{mark} {finding}")
+        print(f"    best single segment offered {finding.alone} distinct payloads, "
+              f"pooling gives {finding.pool.distinct}"
+              f"{' -- below the bar of 24 alone' if finding.settled_by_pooling else ''}")
+        if finding.hypothesis.data_id is not None:
+            ids = p22_id_list(finding.hypothesis.data_id)
+            print(f"    data IDs by counter value: {' '.join(f'{i:02X}' for i in ids)}")
+    if needed:
+        print("\n* marks a list only the pool could settle; the rest a rich enough "
+              "single\n  segment could also have reached.")
+    return 0
+
+
 def cmd_truth_dbc(args) -> int:
     from .truth import FieldKind, load_dbc
 
@@ -745,6 +785,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--top", type=int, default=40, help="rows in the overview (default: 40)")
     p.add_argument("--no-color", action="store_true", help="never emit ANSI colour")
     p.set_defaults(func=cmd_corroborate, op=None)
+
+    p = sub.add_parser(
+        "corroborate-pooled",
+        help="solve Data ID lists no single segment carries enough evidence for",
+    )
+    p.add_argument("platform", help="platform key; see 'canlens corpus list'")
+    p.add_argument("--limit", type=int, help="segments to pool (default: all local)")
+    p.add_argument(
+        "--min-devices", type=int, default=2,
+        help="distinct cars required (default: %(default)s)",
+    )
+    p.set_defaults(func=cmd_corroborate_pooled, op=None)
 
     cache = sub.add_parser("cache", help="decode segments once and keep the columns")
     cops = cache.add_subparsers(dest="op", required=True)

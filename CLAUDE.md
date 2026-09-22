@@ -78,14 +78,14 @@ the status of `tail`, which always succeeds:
 | `decode/` | `rlog.zst` → columnar `FrameSet`, plus the npz frame cache |
 | `analyze/` | per-bit entropy/rate/classification and inter-arrival timing |
 | `infer/` | counters, checksums, CRC-16/32/64, every AUTOSAR E2E profile, multiplexors |
-| `corroborate/` | device-weighted cross-segment agreement and tiering |
+| `corroborate/` | device-weighted agreement; pooled evidence for secrets one segment cannot check |
 | `gui/` | PySide6 workbench: Data, Heat Map and Corroborate screens |
 | `export/` | BoAt PDU-database JSON |
 | `truth/` | opendbc DBCs as a reference, and precision/recall against them |
 | `cli.py` | the one `canlens` entry point; `render.py` draws the terminal output |
 
 CLI verbs: `corpus {list,plan,fetch,status,delete,which}`, `decode {schema,summary}`,
-`analyze trace`, `infer {trace,message}`, `corroborate`, `truth {dbc,score}`,
+`analyze trace`, `infer {trace,message}`, `corroborate`, `corroborate-pooled`, `truth {dbc,score}`,
 `export pdu-db`, `cache {build,clear,status}`, `gui`.
 
 ## Hard invariants

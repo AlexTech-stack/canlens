@@ -114,6 +114,7 @@ ordering.
 ./.venv/bin/canlens infer trace <segment>/rlog.zst
 ./.venv/bin/canlens infer message <segment>/rlog.zst --address 0x210 --bus 1
 ./.venv/bin/canlens corroborate KIA_EV6
+./.venv/bin/canlens corroborate-pooled VOLKSWAGEN_GOLF_MK7  # needs many segments
 ./.venv/bin/canlens truth dbc <file.dbc>                 # what ground truth it offers
 ./.venv/bin/canlens truth score <segment>/rlog.zst --dbc <file.dbc>
 ./.venv/bin/canlens export pdu-db <segment>/rlog.zst -o out.json
@@ -134,7 +135,7 @@ device and route. `corpus which` and the `[PLATFORM]` prefix on output are the w
 | `src/canlens/decode/` | `rlog.zst` → columnar `FrameSet`; npz frame cache | working |
 | `src/canlens/analyze/` | per-bit entropy, transition rate, classification; timing | working |
 | `src/canlens/infer/` | counters, checksums, CRC-16/32/64, AUTOSAR E2E, multiplexors | working |
-| `src/canlens/corroborate/` | device-weighted cross-segment agreement and tiering | working |
+| `src/canlens/corroborate/` | device-weighted agreement; pooled evidence for secrets one segment cannot check | working |
 | `src/canlens/gui/` | PySide6 workbench: Data, Heat Map, Corroborate screens | working |
 | `src/canlens/export/` | BoAt PDU-database JSON | working |
 | `src/canlens/truth/` | opendbc DBCs as a reference; precision/recall against them | working |
@@ -158,6 +159,7 @@ fetching data never drags in a compiler toolchain. Do not add a third-party impo
 | Change bit classification thresholds | `analyze/bits.py` |
 | Change cadence classification | `analyze/timing.py` |
 | Change cross-segment tiering | `corroborate/consensus.py` |
+| Change pooled-evidence solving | `corroborate/pooled.py` |
 | Change how a DBC is read | `truth/dbc.py` |
 | Change how findings are scored | `truth/score.py` |
 | Change what the GUI draws | `gui/window.py` (Qt) and `gui/model.py` (no Qt) |

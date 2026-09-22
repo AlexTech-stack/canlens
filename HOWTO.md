@@ -589,9 +589,8 @@ reproducing every frame implies it reproduces every counter value's frames.
 
 The messages whose sixteen entries genuinely differ are still refused when all
 they offer is sixteen distinct payloads, and that refusal is right: a single
-segment cannot check them. Corroborating across segments could, because
-different drives carry different content, and that is the obvious next use for
-the corroboration layer.
+segment cannot check them. Several segments together can — see
+[Pooling segments for evidence](#pooling-segments-for-evidence).
 
 ### 16-bit CRCs and AUTOSAR E2E Profile 5
 
@@ -674,6 +673,71 @@ Tiers (`ESTABLISHED_SUPPORT`, `PARTIAL_SUPPORT`, `MIN_DEVICES` in
 Two hypotheses claiming the same bits with different parameters — two
 strides for one counter, two Data IDs for one CRC — are both kept and both
 marked **contested**; the evidence counts say which one the corpus backs.
+
+### Pooling segments for evidence
+
+The corroboration above pools *conclusions*: how many segments independently
+reached the same finding. That works when each segment could reach it alone.
+Some cannot, and Profile 22's sixteen-byte Data ID list is the case that
+proves it. Sixteen unknowns fitted to sixteen distinct payloads is a fit with
+nothing left over, so a static message carrying only its counter can never
+settle the claim — and pooling conclusions cannot rescue it, because every
+segment of such a message shows the same sixteen payloads and so solves the
+same sixteen bytes. Sixteen segments agreeing on a fit that was unfalsifiable
+in each of them is still unfalsifiable.
+
+What is needed is more *equations*, which means pooling the payloads
+themselves:
+
+```bash
+canlens corroborate-pooled VOLKSWAGEN_GOLF_MK7
+```
+
+```
+VOLKSWAGEN_GOLF_MK7: 30 Profile 22 lists solved from pooled segments,
+2 of which no single segment carried enough evidence for
+
+* bus 0 0x65D: e2e_p22 @ byte 0 (100.0% of 87 frames; 87 distinct payloads
+  pooled from 40 segments, 24 devices)
+    best single segment offered 20 distinct payloads, pooling gives 87
+    data IDs by counter value: AC B3 AB EB 7A E1 3B F7 73 BA 7C 9E 06 5F 02 D9
+```
+
+Nothing is relaxed. The same detector and the same evidence gate see a larger
+matrix, reduced to distinct contents so that segments repeating each other
+contribute nothing and segments carrying new content contribute equations.
+
+### Two things this got wrong first
+
+**Deduplication destroys the sequence a counter is.** Reducing to distinct
+contents is exactly what supplies the extra equations, and it also scrambles
+the frame order. On the Golf's `GRA_ACC_01` the deduplicated pool of 125
+payloads has its counter nibble running 4, 5, … 15, 0, 1, 2, 3, 7, 8, 13, 14 —
+no stride survives, `find_counters` rightly reports nothing, and the list
+search was silently left with no field to group by. Each deduplicated row
+still carries its own counter value, so grouping works once the field is
+known; only *finding* the field needs frames in the order they arrived. The
+counter is therefore located on one segment's ordered frames.
+
+**A message another segment could explain is still worth reporting.** The
+first version filtered those out, on the grounds that a finding the ordinary
+path already makes is not news. But whether a single segment can settle a
+message depends on which drive you happened to analyse: `ESP_33` offers 16
+distinct payloads on one Golf segment and 78 on another. Filtering hid
+twenty-eight real lists. They are reported, with a mark on the ones pooling
+was actually necessary for.
+
+### Whether to believe it
+
+Two checks, neither of which the solver can arrange for itself. Of the 30
+lists, 27 are on messages `vw_mqb.dbc` names a checksum on, all at byte 0 and
+all reproducing every frame. And twelve of the messages appear on two buses,
+because the gateway copies them — twelve independent solves over different
+frames, agreeing on all sixteen bytes in every case.
+
+Pooled findings are reported on their own and do not feed back into the
+per-segment results or into `truth score`, which still measures what one
+segment can do.
 
 ### What only the corpus can show
 
