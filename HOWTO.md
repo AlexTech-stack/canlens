@@ -739,6 +739,30 @@ Pooled findings are reported on their own and do not feed back into the
 per-segment results or into `truth score`, which still measures what one
 segment can do.
 
+### When pooling correctly finds nothing
+
+Run it on the Rivian or the EV6 and it reports no lists at all, over twenty
+and eleven segments respectively. That is the right answer, not a shortage of
+data, and the tool says so:
+
+```
+RIVIAN_R1_GEN1: pooled 20 segments from 19 devices and found no Profile 22 Data ID list.
+This platform's checksums are e2e_p11 (4152) -- none of which hides a sixteen-byte
+secret, so none of them needs pooling to be checked.
+```
+
+Each platform family sticks to one scheme. Rivian is Profile 11 throughout,
+the EV6 is Profile 5 with a little Profile 11, and the Golf is Profile 22
+throughout. Only Profile 22 hides sixteen bytes; Profile 11 hides one and
+Profile 5 two, needing nine and ten distinct payloads against Profile 22's
+twenty-four. A single segment clears those easily, which is why Rivian already
+scores 100% precision and recall against its DBC without any of this.
+
+So pooling is not a general strengthener. It is the answer to one specific
+shape of problem — a secret large enough that an ordinary message cannot
+constrain it — and saying "fetch more segments" to a platform that does not
+have that problem would be wrong advice.
+
 ### What only the corpus can show
 
 The per-bit line under the strip is the agreement decile per bit, and a `!`

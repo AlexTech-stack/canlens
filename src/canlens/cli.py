@@ -332,12 +332,7 @@ def cmd_corroborate_pooled(args) -> int:
         min_devices=args.min_devices, progress=progress,
     )
     if not found:
-        print(
-            f"canlens: nothing for {args.platform} -- pooling needs several segments from "
-            f"several devices ('canlens corpus fetch {args.platform}')",
-            file=sys.stderr,
-        )
-        return 1
+        return _no_pooled_findings(args)
     needed = [f for f in found if f.settled_by_pooling]
     print(
         f"\n{args.platform}: {len(found)} Profile 22 lists solved from pooled segments, "
@@ -355,6 +350,49 @@ def cmd_corroborate_pooled(args) -> int:
     if needed:
         print("\n* marks a list only the pool could settle; the rest a rich enough "
               "single\n  segment could also have reached.")
+    return 0
+
+
+def _no_pooled_findings(args) -> int:
+    """Say which kind of nothing this is: too little data, or a real answer.
+
+    "Pool more segments" is wrong advice for a platform that simply does not
+    use Profile 22, and Rivian and the EV6 are both in that position -- one is
+    Profile 11 throughout, the other Profile 5. Reporting what the platform
+    *does* use turns an empty result into an informative one.
+    """
+    from collections import Counter
+
+    from .corpus import Manifest, inventory
+    from .corroborate import device_of
+    from .corroborate.pooled import MIN_DEVICES
+    from .infer import infer_cached
+
+    held = inventory(args.root, Manifest.load(f"{args.root}/database.json")).get(args.platform)
+    paths = list(held.paths if held else [])[: args.limit]
+    devices = {device_of(path) for path in paths}
+    if len(devices) < max(args.min_devices, MIN_DEVICES):
+        print(
+            f"canlens: {args.platform} has {len(paths)} local segment(s) from "
+            f"{len(devices)} device(s); pooling needs at least {args.min_devices}. "
+            f"Try 'canlens corpus fetch {args.platform}'.",
+            file=sys.stderr,
+        )
+        return 1
+
+    algorithms: Counter[str] = Counter()
+    for path in paths:
+        for message in infer_cached(path, root=args.root):
+            algorithms.update(c.algorithm for c in message.checksums)
+            algorithms.update(c.algorithm for c in message.crc16s)
+    print(
+        f"{args.platform}: pooled {len(paths)} segments from {len(devices)} devices "
+        f"and found no Profile 22 Data ID list."
+    )
+    if algorithms:
+        named = ", ".join(f"{name} ({count})" for name, count in algorithms.most_common(4))
+        print(f"This platform's checksums are {named} -- none of which hides a sixteen-byte")
+        print("secret, so none of them needs pooling to be checked.")
     return 0
 
 

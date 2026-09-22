@@ -263,3 +263,25 @@ def test_more_segments_never_reduce_the_evidence(segments, tmp_path):
     pool = TestSolveP22.thin_pool(segments, tmp_path)
     smaller = TestSolveP22.thin_pool(segments - 1, tmp_path)
     assert pool.distinct >= smaller.distinct
+
+
+class TestScopeOfPooling:
+    """Only a sixteen-byte secret needs pooling; the rest fit in one segment."""
+
+    def test_profile_11_and_5_secrets_clear_the_bar_on_their_own(self):
+        """One and two bytes need 9 and 10 distinct payloads, not 24.
+
+        This is why pooling Rivian and the EV6 finds nothing: they are
+        Profile 11 and Profile 5 throughout, and a single segment already
+        carries enough to check either.
+        """
+        from canlens.infer.checksums import distinct_contents, enough_evidence
+
+        # A static message plus its counter: sixteen distinct payloads, the
+        # exact shape that defeats Profile 22 and leaves the others untouched.
+        bodies = [bytes([0, 0xA0, 0, 0, 0, 0, 0, 0])]
+        matrix = as_matrix(p22_payloads(n=192, bodies=bodies))
+        assert distinct_contents(matrix, [0]) == 16
+        assert enough_evidence(matrix, [0], 1)   # Profile 1/11, needs 9
+        assert enough_evidence(matrix, [0], 2)   # Profile 5, needs 10
+        assert not enough_evidence(matrix, [0], 16)  # Profile 22, needs 24
