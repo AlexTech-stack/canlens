@@ -80,13 +80,14 @@ class TestFindSignals:
         assert all(s.end_bit <= 4 or s.start_bit >= 8 for s in split)
 
     def test_the_observed_range_is_reported(self):
-        """A byte counting 0..199 reads as six bits, because bits 6 and 7
-        flip too rarely in 200 frames to be evidence of anything."""
+        """A byte counting 0..199 reads as seven bits: bit 6 turns over three
+        times in 200 frames, which the floor accepts, and bit 7 turns over
+        once, which is not evidence of anything."""
         payloads = [bytes([v, 0]) for v in range(200)]
         found = find_signals(matrix_of(payloads))
         first = next(s for s in found if s.start_bit == 0)
-        assert (first.length, first.minimum, first.maximum) == (6, 0, 63)
-        assert not first.bounded and first.span == 63
+        assert (first.length, first.minimum, first.maximum) == (7, 0, 127)
+        assert not first.bounded and first.span == 127
 
     def test_two_fast_fields_side_by_side_are_read_as_one(self):
         """A known limit, recorded rather than papered over.
@@ -106,6 +107,32 @@ class TestFindSignals:
             payloads.append(((high << 6) | low).to_bytes(2, "little"))
         found = find_signals(matrix_of(payloads))
         assert len(found) == 1 and found[0].start_bit == 0
+
+    def test_a_slow_narrow_enum_is_out_of_reach(self):
+        """A second known limit, and the reason lowering the floor cannot fix it.
+
+        A 2-bit enum that changes state five times in a drive puts its low bit
+        at 0.010 and its high bit at 0.005, because the high bit of any field
+        moves half as often as the low one. Whatever floor admits the first
+        drops the second, leaving one surviving bit -- a flag by definition,
+        not a field. Narrow fields are not lost to a threshold being too
+        strict; they are lost to having no rate profile to segment.
+        """
+        payloads, value = [], 0
+        for i in range(400):
+            if i and i % 80 == 0:
+                value = (value + 1) % 4
+            payloads.append(bytes([value, 0]))
+        assert find_signals(matrix_of(payloads)) == []
+
+    def test_the_top_of_a_wide_field_survives_the_floor(self):
+        """What lowering the floor actually bought: not narrow fields but the
+        slow upper bits of wide ones, where the rate decay runs out."""
+        payloads = [bytes([v, 0]) for v in range(200)]
+        found = find_signals(matrix_of(payloads))
+        first = next(s for s in found if s.start_bit == 0)
+        assert first.length == 7, "bit 6 turns over three times and must count"
+        assert find_signals(matrix_of(payloads), min_rate=0.02)[0].length == 6
 
     def test_an_empty_trace_yields_nothing(self):
         assert find_signals(np.zeros((0, 16), dtype=np.uint8)) == []

@@ -480,8 +480,8 @@ into still bits is a lower bound. The distinction earns its keep: bounded
 claims have the exact width 89% of the time, and unbounded ones are right as a
 lower bound 89% of the time.
 
-Scored against opendbc over nine platform and DBC pairs: **53% precision, 51%
-recall**, on 259 hits against 246 missed and 228 extra. The scorer skips
+Scored against opendbc over nine platform and DBC pairs: **51% precision, 50%
+recall**, on 313 hits against 312 missed and 303 extra. The scorer skips
 reference signals whose bits never moved, on the same reasoning it already
 skips messages the drive never carried — of 4566 signals the DBCs name on
 recorded messages, 4307 sat completely still, and counting those as misses
@@ -490,16 +490,73 @@ detector works. That is the weakest detector here by some
 distance, and it is reported last, over only the bits nothing else explained —
 a verified claim always outranks bits that merely move together.
 
-### Two things it cannot do
+### How fast a field moves, and who the rate floor excludes
+
+Every bit is held to a minimum transition rate before it may join a field, and
+that one number decides what the detector is allowed to look at. It excludes
+almost exactly the opposite of what one would guess. Over seven platforms,
+taking each reference signal whose bits move at all:
+
+| declared width | median rate of its low bit | moves on ≥2% of frames |
+|---|---|---|
+| 1 bit | 0.004 | 27% |
+| 2 bits | 0.010 | 34% |
+| 3 bits | 0.004 | 14% |
+| 4 bits | 1.000 | 84% |
+| 5–8 bits | 0.257 | 79% |
+| 9 bits and up | 0.285 | 89% |
+
+Narrow fields barely move. An ignition switch does not run through its states
+for the fun of it, and a mode selector holds one value for a whole drive. A bit
+that flips *fast* and narrow is nearly always the bottom of a wider number
+instead. The 4-bit row is the exception that proves the rule: those are alive
+counters, claimed by the counter detector long before this one runs.
+
+So the floor came down from 0.02 to 0.01, which took precision from 48% to 51%
+and recall from 49% to 50% — 43 more correct signals and none lost.
+
+**But not for the reason the table suggests.** Of the 37 signals that turn from
+miss to hit on one measured set, only 3 are three bits or narrower; 28 are
+eight bits or wider. What the old floor was really cutting off was the *top* of
+wide fields, where the rate decay runs out — bit 6 of a byte turns over a few
+times in a drive, bit 9 of a 16-bit field fewer — so the claim stopped short of
+the declared width and scored as a miss.
+
+Narrow fields did not move, and cannot be moved by a threshold. A 2-bit enum's
+high bit changes half as often as its low bit, so any floor that admits the
+first still drops the second, leaving one surviving bit: a flag by definition.
+
+Two other ways of reading such bits were tried against opendbc and both failed,
+which is why neither is in the code:
+
+- **Changes landing in the same frame.** If adjacent slow bits belong to one
+  field they ought to move together. Over 1069 adjacent slow pairs, bits inside
+  one signal share a transition 46% of the time and bits across a boundary 59%
+  of the time. The test does not merely fail, it points the wrong way: inside
+  an enum only the low bit moves on most steps, while two unrelated neighbours
+  both react to the ignition. It measures the driver, not the layout.
+- **Refusing to cut below a fast narrow piece.** If a fast 2-bit field is
+  really the bottom of a wider one, suppressing the cut that made it should
+  recover the wider field. It recovers nothing — identical scores to three
+  figures at every threshold tried.
+
+A slow narrow field and the flag beside it leave the same trace. Separating
+them needs something a recording does not contain.
+
+### What it cannot do
 
 **Two fast fields side by side read as one.** The boundary is visible only
 where the rate rises, and between two fields that both move on most frames it
 does not. There is a test for this, asserting the merge, because the limit is
 better recorded than discovered.
 
-**A slow field is cut short.** A byte counting 0 to 199 is reported as six
-bits, because bits 6 and 7 flip too rarely in two hundred frames to be evidence
-of anything. Longer traces push that out; they do not remove it.
+**A slow field is cut short.** A byte counting 0 to 199 is reported as seven
+bits, because bit 7 turns over once in two hundred frames and once is not
+evidence of anything. Longer traces push that out; they do not remove it.
+
+**A narrow field that sits still is invisible.** Of the claims two or three
+bits wide, 5% match a reference signal. Unlike the other two this is not a
+threshold that could be loosened; the section above measures why.
 
 ### More drives, more range
 
