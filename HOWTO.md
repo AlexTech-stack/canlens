@@ -443,6 +443,64 @@ computed independently and agree.
 
 Widen the plot with `--samples` to see the counter wrap.
 
+### Signals — where one field ends and the next begins
+
+Every detector above claims a field because it can *reproduce* it. An ordinary
+signal offers nothing of the kind: a wheel speed is just bits that move, and
+the only question is which of them move together.
+
+**The start of a field is visible.** Inside a numeric field the transition rate
+falls away from the least significant bit — bit 0 flips every frame, bit 1
+every other, and so on — so a boundary shows up as the rate *rising* again
+where the next field's low bit begins. Scored against opendbc, a rate rising to
+three times its neighbour puts the start bit right on 210 of 411 real signals.
+
+**The far end has no marker at all.** A field's high bits stop moving because
+the value never grew large enough to reach them, and a trace cannot tell that
+from the field ending there. Of 411 signals whose bits move, only 157 have
+every declared bit moving; 209 start exactly where the DBC says and simply run
+out of evidence. The rate profile of a genuine 16-bit signal reads
+
+```
+0.30 0.29 0.30 0.30 0.27 0.20 0.12 0.06 0.03 0.02 0.01 0.01 0.00 0.00 0.00 0.00
+```
+
+and nothing in it says sixteen rather than ten.
+
+So what is claimed is the span the trace justifies, and a `+` marks the rest:
+
+```
+  signal   at least 4 bits @ bit 16, seen 0..15
+  signal   at least 3 bits @ bit 30, seen 0..7
+```
+
+A field stopped by something — another moving field, a counter, a checksum, the
+end of the payload — is *bounded*, and its width is the width. One that faded
+into still bits is a lower bound. The distinction earns its keep: bounded
+claims have the exact width 89% of the time, and unbounded ones are right as a
+lower bound 89% of the time.
+
+Scored against opendbc over nine platform and DBC pairs: **53% precision, 51%
+recall**, on 259 hits against 246 missed and 228 extra. The scorer skips
+reference signals whose bits never moved, on the same reasoning it already
+skips messages the drive never carried — of 4566 signals the DBCs name on
+recorded messages, 4307 sat completely still, and counting those as misses
+would measure how much of the car the driver exercised rather than how well the
+detector works. That is the weakest detector here by some
+distance, and it is reported last, over only the bits nothing else explained —
+a verified claim always outranks bits that merely move together.
+
+### Two things it cannot do
+
+**Two fast fields side by side read as one.** The boundary is visible only
+where the rate rises, and between two fields that both move on most frames it
+does not. There is a test for this, asserting the merge, because the limit is
+better recorded than discovered.
+
+**A slow field is cut short.** A byte counting 0 to 199 is reported as six
+bits, because bits 6 and 7 flip too rarely in two hundred frames to be evidence
+of anything. Longer traces push that out; they do not remove it.
+
 ### What is and is not claimed
 
 **Counters** must advance by a constant step *and* walk their whole range. Two

@@ -176,11 +176,12 @@ def cmd_infer_trace(args) -> int:
         f"{sum(len(m.counters) for m in hits)} counters, "
         f"{sum(len(m.checksums) for m in hits)} checksums, "
         f"{sum(len(m.crc16s) for m in hits)} 16-bit CRCs, "
-        f"{sum(m.multiplexor is not None for m in hits)} multiplexors"
+        f"{sum(m.multiplexor is not None for m in hits)} multiplexors, "
+        f"{sum(len(m.signals) for m in hits)} signals"
     )
     if not hits:
         return 0
-    print(f"\n{'message':<14}{'frames':>7}  {'counters':<35}checksums")
+    print(f"\n{'message':<14}{'frames':>7}  {'counters':<35}{'checksums':<30}signals")
     for m in hits[: args.top]:
         counters = ", ".join(
             f"{c.length}bit@{c.start_bit}"
@@ -210,7 +211,13 @@ def cmd_infer_trace(args) -> int:
         )
         if len(counters) > 33:
             counters = counters[:32] + "\u2026"
-        print(f"{m!s:<14}{m.frames:>7}  {counters or '-':<35}{checks or '-'}")
+        if len(checks) > 28:
+            checks = checks[:27] + "\u2026"
+        fields = ", ".join(
+            f"{s.length}{'' if s.bounded else '+'}bit@{s.start_bit}" for s in m.signals
+        )
+        print(f"{m!s:<14}{m.frames:>7}  {counters or '-':<35}{checks or '-':<30}"
+              f"{fields or '-'}")
     if len(hits) > args.top:
         print(f"... and {len(hits) - args.top} more (use --top)")
     return 0
@@ -258,6 +265,10 @@ def cmd_infer_message(args) -> int:
     if result.multiplexor is not None:
         mux = result.multiplexor
         marks.update(dict.fromkeys(range(mux.start_bit, mux.end_bit), FIELD_MARKS["mux"]))
+    for signal in result.signals:
+        marks.update(
+            dict.fromkeys(range(signal.start_bit, signal.end_bit), FIELD_MARKS["signal"])
+        )
 
     print(f"  {bit_strip(result.bits.kinds, color=color)}")
     if marks:
@@ -287,6 +298,13 @@ def cmd_infer_message(args) -> int:
         print(f"\n  checksum byte {s.byte_index}, algorithm {s.algorithm}")
         print(f"           {bar(s.match_rate)} {s.match_rate:.1%} "
               f"({round(s.match_rate * s.frames)}/{s.frames} frames)")
+    for signal in result.signals:
+        extent = (
+            f"{signal.length} bits" if signal.bounded else f"at least {signal.length} bits"
+        )
+        print(f"\n  signal   {extent} @ bit {signal.start_bit}, "
+              f"seen {signal.minimum}..{signal.maximum}")
+        print(f"           {sparkline(field_values(matrix, signal.start_bit, signal.length).tolist(), samples)}")
     for crc in result.crc16s:
         ident = "" if crc.data_id is None else f", data ID 0x{crc.data_id:04X}"
         print(f"\n  crc16    bytes {crc.start_byte}-{crc.start_byte + 1}, {crc.algorithm}, "

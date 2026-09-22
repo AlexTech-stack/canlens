@@ -134,7 +134,7 @@ device and route. `corpus which` and the `[PLATFORM]` prefix on output are the w
 | `src/canlens/corpus/` | manifest, selective fetch, local accounting | working |
 | `src/canlens/decode/` | `rlog.zst` → columnar `FrameSet`; npz frame cache | working |
 | `src/canlens/analyze/` | per-bit entropy, transition rate, classification; timing | working |
-| `src/canlens/infer/` | counters, checksums, CRC-16/32/64, AUTOSAR E2E, multiplexors | working |
+| `src/canlens/infer/` | counters, checksums, CRC-16/32/64, E2E, multiplexors, signals | working |
 | `src/canlens/corroborate/` | bus identification, device-weighted agreement, pooled evidence | working |
 | `src/canlens/gui/` | PySide6 workbench: Data, Heat Map, Corroborate screens | working |
 | `src/canlens/export/` | BoAt PDU-database JSON | working |
@@ -156,6 +156,7 @@ fetching data never drags in a compiler toolchain. Do not add a third-party impo
 | Change a 16-bit CRC or E2E Profile 5 | `infer/crc16.py` |
 | Change E2E Profile 22, 6, 4 or 7 | `infer/profiles.py` (+ `infer/crcwide.py` for CRC-32/64) |
 | Change multiplexor detection | `infer/multiplex.py` |
+| Change signal boundary detection | `infer/signals.py` |
 | Change bit classification thresholds | `analyze/bits.py` |
 | Change cadence classification | `analyze/timing.py` |
 | Change cross-segment tiering | `corroborate/consensus.py` |
@@ -209,6 +210,7 @@ Thresholds: counters **0.95**, everything else **0.99**.
 6. CRC-16 (3 variants) and E2E Profile 5
 7. Multiplexor
 8. Two counter cleanups (`outside_checksums`, `outside_multiplex`)
+9. Signals, over bits nothing above explained
 
 Each stage receives only the byte positions nothing simpler has already explained. **Reordering
 changes results.** Without the ordering a plain byte sum gets reported as an exotic CRC.
@@ -429,8 +431,6 @@ either side is wrong.
 
 ## 9. Not implemented — say so plainly
 
-- **Signal boundaries.** Nothing groups adjacent bits into a field unless a detector claims
-  them. A 16-bit wheel speed is measured bit by bit and reported as nothing.
 - **Scaling and units.** No factor, offset or unit is ever inferred.
 - **Signals inside a multiplexed layout.** The selector is found and its per-value layouts are
   drawn, but no detector runs separately within each selector value.

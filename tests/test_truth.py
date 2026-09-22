@@ -65,11 +65,18 @@ def reference(tmp_path):
     return load_dbc(str(path))
 
 
-def profile(width: int = 8) -> BitProfile:
+def profile(width: int = 8, moving: bool = True) -> BitProfile:
+    """A bit profile whose bits move, unless asked otherwise.
+
+    The scorer skips reference signals whose bits never moved -- there is
+    nothing in the trace to find them with -- so a profile of all-zero rates
+    would quietly exempt every signal from being scored at all.
+    """
     n = width * 8
+    rates = np.full(n, 0.5) if moving else np.zeros(n)
     return BitProfile(
         width=width, frames=100, ones=np.zeros(n), entropy=np.zeros(n),
-        rates=np.zeros(n), kinds=[BitKind.CONSTANT] * n, order=BitOrder.INTEL,
+        rates=rates, kinds=[BitKind.CONSTANT] * n, order=BitOrder.INTEL,
     )
 
 
@@ -176,20 +183,21 @@ class TestLoadDbc:
 class TestClaimedFields:
     def test_a_counter_claims_its_own_bits(self):
         claims = claimed_fields(inference(counters=[CounterHypothesis(8, 4, 1, 1.0, 100)]))
-        assert claims[FieldKind.COUNTER] == [((8, 9, 10, 11), "4bit@8")]
+        [claim] = claims[FieldKind.COUNTER]
+        assert (claim.bits, claim.text, claim.exact) == ((8, 9, 10, 11), "4bit@8", True)
 
     def test_a_checksum_claims_its_whole_byte(self):
         claims = claimed_fields(
             inference(checksums=[ChecksumHypothesis(7, "toyota", 1.0, 100)])
         )
-        bits, text = claims[FieldKind.CHECKSUM][0]
-        assert bits == tuple(range(56, 64)) and text == "toyota@byte7"
+        claim = claims[FieldKind.CHECKSUM][0]
+        assert claim.bits == tuple(range(56, 64)) and claim.text == "toyota@byte7"
 
     def test_a_wide_crc_claims_every_byte_it_covers(self):
         claims = claimed_fields(
             inference(crc16s=[Crc16Hypothesis(2, "e2e_p05", "little", 1.0, 100, 0xFA10)])
         )
-        assert claims[FieldKind.CHECKSUM][0][0] == tuple(range(16, 32))
+        assert claims[FieldKind.CHECKSUM][0].bits == tuple(range(16, 32))
 
     def test_checksums_and_wide_crcs_pool_into_one_kind(self):
         """A DBC names both CHECKSUM and CRC without distinguishing width."""
@@ -202,7 +210,8 @@ class TestClaimedFields:
     def test_a_multiplexor_claims_its_selector(self):
         mux = MultiplexHypothesis(0, 8, (0, 1, 2), (10, 10, 10), (8, 9), 30)
         claims = claimed_fields(inference(multiplexor=mux))
-        assert claims[FieldKind.MULTIPLEXOR] == [(tuple(range(8)), "8bit@0")]
+        [claim] = claims[FieldKind.MULTIPLEXOR]
+        assert (claim.bits, claim.text) == (tuple(range(8)), "8bit@0")
 
     def test_a_message_with_no_findings_claims_nothing(self):
         claims = claimed_fields(inference())
@@ -267,8 +276,9 @@ class TestScore:
         result = score([inference(counters=[CounterHypothesis(8, 4, 1, 1.0, 100)])], bare)
         assert FieldKind.COUNTER not in result.scorable
         assert result.unevaluated[FieldKind.COUNTER] == 1
-        assert result.overall == Tally()
-        assert "nothing scorable" in str(result)
+        assert result.tallies[FieldKind.COUNTER] == Tally()
+        # SPEED is an ordinary signal, so that kind is scorable and unfound.
+        assert result.scorable == {FieldKind.SIGNAL}
 
     def test_scoring_covers_every_kind_at_once(self, reference):
         mux = MultiplexHypothesis(0, 2, (0, 1), (10, 10), (8, 9), 20)
@@ -286,13 +296,54 @@ class TestScore:
         assert result.tallies[FieldKind.COUNTER].hits == 1
         assert result.tallies[FieldKind.CHECKSUM].hits == 1
         assert result.tallies[FieldKind.MULTIPLEXOR].hits == 1
-        assert result.overall == Tally(hits=3)
-        assert result.overall.precision == 1.0 and result.overall.recall == 1.0
+        # Nothing claimed an ordinary signal, so the reference's are missed.
+        assert result.tallies[FieldKind.SIGNAL] == Tally(missed=2)
+        assert result.overall.hits == 3 and result.overall.false_alarms == 0
+        assert result.overall.precision == 1.0
 
-    def test_ordinary_signals_are_counted_for_context_not_scored(self, reference):
+    def test_ordinary_signals_are_scored_now_that_canlens_claims_them(self, reference):
         result = score([inference(address=528)], reference)
         assert result.unnamed_signals == 1  # ENGINE_RPM
-        assert FieldKind.SIGNAL not in result.tallies
+        assert FieldKind.SIGNAL in result.tallies
+        assert result.tallies[FieldKind.SIGNAL].missed == 1
+
+    def test_a_reference_signal_that_never_moved_is_not_a_miss(self):
+        """Nothing in the trace could have found it."""
+        still = MessageInference(
+            bus=0, address=528, width=8, frames=100, bits=profile(moving=False)
+        )
+        result = score([still], self.reference_for())
+        assert result.tallies[FieldKind.SIGNAL] == Tally()
+        assert result.still_signals == 1
+
+    def test_a_lower_bound_matches_a_wider_reference_field(self):
+        """ENGINE_RPM is 16 bits at 16; claiming "10+ bits at 16" is right."""
+        from canlens.infer.signals import SignalHypothesis
+
+        found = score(
+            [inference(address=528, signals=[
+                SignalHypothesis(16, 10, 100, 0.5, 0, 900, bounded=False)])],
+            self.reference_for(),
+        )
+        assert found.tallies[FieldKind.SIGNAL].hits == 1
+
+    def test_a_bounded_claim_gets_no_such_allowance(self):
+        from canlens.infer.signals import SignalHypothesis
+
+        found = score(
+            [inference(address=528, signals=[
+                SignalHypothesis(16, 10, 100, 0.5, 0, 900, bounded=True)])],
+            self.reference_for(),
+        )
+        assert found.tallies[FieldKind.SIGNAL].hits == 0
+
+    @staticmethod
+    def reference_for():
+        import pathlib as _p
+        import tempfile
+        path = _p.Path(tempfile.mkdtemp()) / "s.dbc"
+        path.write_text(DBC)
+        return load_dbc(str(path))
 
 
 class TestPickBus:

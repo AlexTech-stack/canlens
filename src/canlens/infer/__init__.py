@@ -44,6 +44,7 @@ from .message import (
 )
 from .multiplex import MultiplexHypothesis, find_multiplexor
 from .results import INFER_VERSION, clear_results, infer_cached, warm_segment
+from .signals import SignalHypothesis, find_signals
 
 __all__ = [
     "ALGORITHMS",
@@ -54,6 +55,7 @@ __all__ = [
     "Crc16Hypothesis",
     "MessageInference",
     "MultiplexHypothesis",
+    "SignalHypothesis",
     "checksum_candidate_bytes",
     "clear_results",
     "crc16_autosar",
@@ -66,6 +68,7 @@ __all__ = [
     "find_e2e_crc8",
     "find_honda_nibble",
     "find_multiplexor",
+    "find_signals",
     "honda_nibble",
     "infer_cached",
     "infer_frames",

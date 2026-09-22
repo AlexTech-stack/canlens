@@ -104,7 +104,7 @@ def legend(color: bool = True) -> str:
 # a field that merely looks busy is unmistakably not one.
 BLOCKS = "▁▂▃▄▅▆▇█"
 
-FIELD_MARKS = {"counter": "C", "checksum": "X", "mux": "M"}
+FIELD_MARKS = {"counter": "C", "checksum": "X", "mux": "M", "signal": "S"}
 
 
 def sparkline(values: list[int] | list[float], width: int = 64) -> str:

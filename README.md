@@ -107,7 +107,7 @@ third-party package is skipped entirely.
 | `corpus/` | manifest, selective fetch, local accounting — **working** |
 | `decode/` | `rlog.zst` → normalised CAN records — **working** |
 | `analyze/` | single-trace timing, entropy, per-bit classification — **working** |
-| `infer/` | counters, checksums, CRC-16/32/64, every AUTOSAR E2E profile, multiplexors — **working**; signal boundaries to do |
+| `infer/` | counters, checksums, CRC-16/32/64, every AUTOSAR E2E profile, multiplexors, signal boundaries — **working** |
 | `corroborate/` | bus identification, cross-segment agreement, pooled evidence — **working** |
 | `gui/` | desktop workbench — **v0 working** |
 | `truth/` | opendbc ground truth, scoring the inference engine — **working** |

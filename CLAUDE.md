@@ -77,7 +77,7 @@ the status of `tail`, which always succeeds:
 | `corpus/` | manifest, selective fetch, local accounting. **Deliberately stdlib-only** |
 | `decode/` | `rlog.zst` → columnar `FrameSet`, plus the npz frame cache |
 | `analyze/` | per-bit entropy/rate/classification and inter-arrival timing |
-| `infer/` | counters, checksums, CRC-16/32/64, every AUTOSAR E2E profile, multiplexors |
+| `infer/` | counters, checksums, CRC-16/32/64, every E2E profile, multiplexors, signal boundaries |
 | `corroborate/` | bus identification, device-weighted agreement, pooled evidence for secrets one segment cannot check |
 | `gui/` | PySide6 workbench: Data, Heat Map and Corroborate screens |
 | `export/` | BoAt PDU-database JSON |
@@ -110,7 +110,7 @@ Counters need 0.95, everything else 0.99.
 
 **3. Detector order in `_build()` is load-bearing.** `infer/message.py` runs candidate bytes →
 counters → plain checksums → Honda's nibble → E2E 1/11 → width-gated E2E 22/6/4/7 → CRC-16
-and E2E 5 → multiplexor → two counter cleanups. Each stage receives only the byte positions nothing simpler
+and E2E 5 → multiplexor → two counter cleanups → signals over whatever is left. Each stage receives only the byte positions nothing simpler
 has explained. Reordering changes results; a plain sum would get reported as an exotic CRC.
 
 **4. Echoes are not data.** `CanData.src >= 128` marks a frame the device itself put on the
@@ -225,7 +225,6 @@ than the function under test. Prefer synthetic payloads with known ground truth 
 
 Say so plainly rather than implying otherwise:
 
-- **Signal boundaries.** Nothing groups adjacent bits into a field unless a detector claims them.
 - **Scaling and units.** No factor, offset or unit is ever inferred.
 - **Signals inside a multiplexed layout.** The selector is found and its layouts are drawn, but
   no detector runs separately within each selector value.

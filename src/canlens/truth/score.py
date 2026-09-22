@@ -15,11 +15,25 @@ of the exercise. So a canlens finding the DBC does not have is not
 automatically wrong, and the output says so. Both directions are reported with
 enough detail to look at the message and decide.
 
-**What is scored.** Only the three kinds of field canlens actually claims:
-counters, checksums (8-bit and wider, pooled, since the DBC does not
-distinguish them) and multiplexors. Ordinary signals are counted for context
-and not scored -- canlens does not yet infer signal boundaries, so scoring them
-would report a recall of zero and say nothing.
+**What is scored.** The four kinds of field canlens claims: counters,
+checksums (8-bit and wider, pooled, since the DBC does not distinguish them),
+multiplexors and ordinary signals.
+
+Signals need one allowance the others do not. A numeric field's high bits stop
+moving when the value never grew large enough to reach them, and a trace cannot
+tell that from the field ending there, so `find_signals` reports an unbounded
+claim as a *lower bound* -- these bits and possibly more above. Judging an
+explicit lower bound by exact equality would measure something nobody claimed,
+so an unbounded claim also matches a reference signal starting at the same bit
+and running wider. A bounded claim gets no such allowance, and neither does
+any other kind of field.
+
+They also need the same exemption a message gets. A reference signal whose
+bits never move in the trace cannot be found: there is nothing to see. Scoring
+them as misses measures how much of the car the driver exercised, not how well
+the detector works -- of 4566 signals the DBCs name on messages that were
+recorded, 4307 sat completely still. Those are counted separately, like a
+message the drive never carried.
 
 **What is scorable.** Recall is computed only over messages present in *both*
 the reference and the trace, at a payload long enough to have been inferred. A
@@ -46,6 +60,7 @@ SCORED_KINDS: tuple[FieldKind, ...] = (
     FieldKind.COUNTER,
     FieldKind.CHECKSUM,
     FieldKind.MULTIPLEXOR,
+    FieldKind.SIGNAL,
 )
 
 
@@ -137,6 +152,7 @@ class Score:
     trace_messages: int = 0  # on the scored bus
     absent_from_trace: int = 0  # reference messages the drive never exercised
     unnamed_signals: int = 0  # ordinary signals, counted but not scored
+    still_signals: int = 0  # reference signals whose bits never moved
     # Kinds the reference names at least once, and so can evaluate.
     scorable: set[FieldKind] = field(default_factory=set)
     # Claims left unevaluated because the reference names no field of that kind.
@@ -162,30 +178,40 @@ class Score:
         )
 
 
-def claimed_fields(inference: MessageInference) -> dict[FieldKind, list[tuple[tuple[int, ...], str]]]:
-    """What canlens claims about one message, as (bit positions, description).
+@dataclass(frozen=True)
+class Claim:
+    """One field canlens claims, and how exactly it claims it."""
+
+    bits: tuple[int, ...]
+    text: str
+    # False for a signal whose width is a lower bound; see the module docstring.
+    exact: bool = True
+
+
+def claimed_fields(inference: MessageInference) -> dict[FieldKind, list[Claim]]:
+    """What canlens claims about one message.
 
     Checksums and 16/32/64-bit CRCs are pooled into one kind: a DBC names both
     `CHECKSUM` and `CRC` without distinguishing the width, so keeping them
     apart here would invent a distinction the reference cannot answer.
     """
-    out: dict[FieldKind, list[tuple[tuple[int, ...], str]]] = {k: [] for k in SCORED_KINDS}
+    out: dict[FieldKind, list[Claim]] = {k: [] for k in SCORED_KINDS}
 
     for counter in inference.counters:
         bits = tuple(range(counter.start_bit, counter.start_bit + counter.length))
-        out[FieldKind.COUNTER].append((bits, f"{counter.length}bit@{counter.start_bit}"))
+        out[FieldKind.COUNTER].append(Claim(bits, f"{counter.length}bit@{counter.start_bit}"))
 
     for checksum in inference.checksums:
         # start_bit and length rather than the byte index: Honda's checksum is
         # four bits, and claiming the whole byte would claim the counter beside it.
         bits = tuple(range(checksum.start_bit, checksum.start_bit + checksum.length))
         out[FieldKind.CHECKSUM].append(
-            (bits, f"{checksum.algorithm}@byte{checksum.byte_index}")
+            Claim(bits, f"{checksum.algorithm}@byte{checksum.byte_index}")
         )
     for crc in inference.crc16s:
         start = crc.start_byte * 8
         out[FieldKind.CHECKSUM].append(
-            (
+            Claim(
                 tuple(range(start, start + crc.nbytes * 8)),
                 f"{crc.algorithm}@byte{crc.start_byte}",
             )
@@ -194,9 +220,19 @@ def claimed_fields(inference: MessageInference) -> dict[FieldKind, list[tuple[tu
     if inference.multiplexor is not None:
         mux = inference.multiplexor
         out[FieldKind.MULTIPLEXOR].append(
-            (
+            Claim(
                 tuple(range(mux.start_bit, mux.end_bit)),
                 f"{mux.length}bit@{mux.start_bit}",
+            )
+        )
+
+    for signal in inference.signals:
+        width = f"{signal.length}bit" if signal.bounded else f"{signal.length}+bit"
+        out[FieldKind.SIGNAL].append(
+            Claim(
+                tuple(range(signal.start_bit, signal.end_bit)),
+                f"{width}@{signal.start_bit}",
+                exact=signal.bounded,
             )
         )
     return out
@@ -204,7 +240,7 @@ def claimed_fields(inference: MessageInference) -> dict[FieldKind, list[tuple[tu
 
 def _compare(
     kind: FieldKind,
-    claims: Sequence[tuple[tuple[int, ...], str]],
+    claims: Sequence[Claim],
     expected: Sequence,
     message: ReferenceMessage,
 ) -> tuple[Tally, list[Disagreement]]:
@@ -216,11 +252,32 @@ def _compare(
     looking at the right field and got its extent wrong" stays visible.
     """
     wanted = {frozenset(s.bits): s for s in expected}
-    got = {frozenset(bits): text for bits, text in claims}
+    got = {frozenset(c.bits): c.text for c in claims}
+    loose = {frozenset(c.bits) for c in claims if not c.exact}
 
     hits = sorted(wanted.keys() & got.keys(), key=lambda s: min(s) if s else 0)
     only_claimed = sorted(got.keys() - wanted.keys(), key=lambda s: min(s) if s else 0)
     only_expected = sorted(wanted.keys() - got.keys(), key=lambda s: min(s) if s else 0)
+
+    # A lower bound matches a reference field that starts where it does and
+    # runs wider. Pair those off before anything is called a disagreement.
+    matched: list[frozenset[int]] = []
+    for claim in only_claimed:
+        if claim not in loose or not claim:
+            continue
+        partner = next(
+            (
+                e
+                for e in only_expected
+                if e >= claim and min(e) == min(claim) and e not in matched
+            ),
+            None,
+        )
+        if partner is not None:
+            matched.append(partner)
+            hits.append(claim)
+    only_claimed = [c for c in only_claimed if c not in set(hits)]
+    only_expected = [e for e in only_expected if e not in matched]
 
     disagreements: list[Disagreement] = []
     near = 0
@@ -248,6 +305,21 @@ def _compare(
     return (
         Tally(hits=len(hits), false_alarms=len(only_claimed), missed=len(only_expected), near=near),
         disagreements,
+    )
+
+
+def _moves(inference: MessageInference, signal) -> bool:
+    """Whether any bit of a reference signal changed during the trace.
+
+    Read off the bit profile `analyze` already measured, using the same
+    threshold `find_signals` uses, so the scorer and the detector agree on
+    what counts as movement.
+    """
+    from ..infer.signals import MIN_RATE
+
+    rates = inference.bits.rates
+    return any(
+        bit < len(rates) and rates[bit] >= MIN_RATE for bit in signal.bits
     )
 
 
@@ -305,9 +377,12 @@ def score(
             if kind not in scorable:
                 result.unevaluated[kind] += len(claims[kind])
                 continue
-            tally, disagreements = _compare(
-                kind, claims[kind], expected.of_kind(kind), expected
-            )
+            wanted = expected.of_kind(kind)
+            if kind is FieldKind.SIGNAL:
+                moving = [s for s in wanted if _moves(inference, s)]
+                result.still_signals += len(wanted) - len(moving)
+                wanted = moving
+            tally, disagreements = _compare(kind, claims[kind], wanted, expected)
             result.tallies[kind] = result.tallies[kind] + tally
             result.disagreements.extend(disagreements)
 

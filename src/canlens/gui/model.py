@@ -314,6 +314,16 @@ class SegmentModel:
                     named,
                 )
             )
+        for signal in row.inference.signals:
+            extent = "" if signal.bounded else " at least"
+            out.append(
+                self._derived_entry(
+                    index, "Signal", signal.start_bit, signal.length,
+                    f"canlens:{extent} {signal.length} bits moving together, "
+                    f"seen {signal.minimum}..{signal.maximum} over {signal.frames} frames",
+                    named,
+                )
+            )
         for crc in row.inference.crc16s:
             detail = "" if crc.data_id is None else f", data ID 0x{crc.data_id:04X}"
             out.append(
@@ -366,6 +376,7 @@ class SegmentModel:
         if row.inference.multiplexor is not None:
             mux = row.inference.multiplexor
             spans.append((mux.start_bit, mux.length, "mux"))
+        spans += [(s.start_bit, s.length, "signal") for s in row.inference.signals]
         return spans
 
 

@@ -30,6 +30,7 @@ from .checksums import (
 from .counters import CounterHypothesis, find_counters
 from .crc16 import Crc16Hypothesis, find_crc16
 from .multiplex import MultiplexHypothesis, find_multiplexor
+from .signals import SignalHypothesis, find_signals
 
 # How many payloads to materialise as bytes for the detectors that still read
 # them (the Data-ID solver reads 4, the CRC screen 64). Everything that scores
@@ -68,6 +69,7 @@ class MessageInference:
     checksums: list[ChecksumHypothesis] = field(default_factory=list)
     crc16s: list[Crc16Hypothesis] = field(default_factory=list)
     multiplexor: MultiplexHypothesis | None = None
+    signals: list[SignalHypothesis] = field(default_factory=list)
 
     @property
     def key(self) -> tuple[int, int]:
@@ -75,7 +77,13 @@ class MessageInference:
 
     @property
     def found_anything(self) -> bool:
-        return bool(self.counters or self.checksums or self.crc16s or self.multiplexor)
+        return bool(
+            self.counters
+            or self.checksums
+            or self.crc16s
+            or self.multiplexor
+            or self.signals
+        )
 
     def __str__(self) -> str:
         return f"bus {self.bus} 0x{self.address:03X}"
@@ -179,19 +187,42 @@ def _build(
         skip_bytes=explained_bytes,
         counter_bits={b for c in counters for b in range(c.start_bit, c.end_bit)},
     )
+    kept = outside_multiplex(outside_checksums(counters, checksums, crc16s), multiplexor)
+
+    # Last, over whatever nothing else explained. A signal is the weakest
+    # claim here -- bits that move together, with no arithmetic to check it
+    # against -- so it never takes bits from a detector that can verify one.
+    spoken_for = set(explained_bytes_to_bits(checksums, crc16s))
+    for counter in kept:
+        spoken_for.update(range(counter.start_bit, counter.end_bit))
+    if multiplexor is not None:
+        spoken_for.update(range(multiplexor.start_bit, multiplexor.end_bit))
+    signals = find_signals(matrix, claimed_bits=spoken_for, **kwargs.get("signal_options", {}))
+
     return MessageInference(
         bus=bus,
         address=address,
         width=width,
         frames=matrix.shape[0],
         bits=bits,
-        counters=outside_multiplex(
-            outside_checksums(counters, checksums, crc16s), multiplexor
-        ),
+        counters=kept,
         checksums=checksums,
         crc16s=crc16s,
         multiplexor=multiplexor,
+        signals=signals,
     )
+
+
+def explained_bytes_to_bits(
+    checksums: Sequence[ChecksumHypothesis], crc16s: Sequence[Crc16Hypothesis]
+) -> set[int]:
+    """Every bit a checksum or CRC accounts for."""
+    out: set[int] = set()
+    for check in checksums:
+        out.update(range(check.start_bit, check.start_bit + check.length))
+    for crc in crc16s:
+        out.update(range(crc.start_byte * 8, (crc.start_byte + crc.nbytes) * 8))
+    return out
 
 
 def outside_multiplex(

@@ -29,6 +29,8 @@ KIND_INDEX: dict[BitKind, int] = {kind: i for i, kind in enumerate(KIND_ORDER)}
 COUNTER_RGBA = (90, 190, 255, 90)
 CHECKSUM_RGBA = (255, 130, 220, 90)
 MUX_RGBA = (255, 200, 80, 90)
+# Ordinary signals: the weakest claim here, so the quietest colour.
+SIGNAL_RGBA = (150, 160, 180, 90)
 # Signals named by hand, distinct from anything inference proposed.
 NAMED_RGBA = (120, 235, 170, 90)
 
