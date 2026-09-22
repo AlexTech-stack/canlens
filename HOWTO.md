@@ -777,6 +777,14 @@ the only ground truth available is the logged number, which is the thing in
 doubt. Under assignment the best pairing beats the runner-up by a median of
 0.65.
 
+**Rare messages are left out.** A signature counts only messages seen at least
+32 times, the same cutoff `infer` uses. A message that appeared once on one
+drive and not on the next makes two recordings of the same bus look less alike
+than they are; including everything split Rivian into seven buses where it has
+six and invented relabellings on three other platforms. Matching the cutoff
+also means identifying buses from frames and from cached inference cannot give
+different answers — checked across all 31 multi-segment platforms.
+
 **The majority keeps its name.** An identity is labelled with the number it was
 most often logged under, so output still reads like the bus numbers everyone
 knows. Sorting by support first matters more than it sounds: on the Audi A3 one

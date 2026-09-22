@@ -61,13 +61,27 @@ class TestOverlap:
 class TestSignatures:
     def test_one_signature_per_bus_of_a_decoded_segment(self):
         frames = from_frames(
-            [CanFrame(i * 1000, 0, 0x100, b"\x00" * 8, False) for i in range(10)]
-            + [CanFrame(i * 1000, 2, 0x300, b"\x00" * 8, False) for i in range(10)]
+            [CanFrame(i * 1000, 0, 0x100, b"\x00" * 8, False) for i in range(40)]
+            + [CanFrame(i * 1000, 2, 0x300, b"\x00" * 8, False) for i in range(40)]
         )
         found = signatures(frames)
         assert [s.bus for s in found] == [0, 2]
         assert found[0].addresses == frozenset({0x100})
-        assert found[0].frames == 10
+        assert found[0].frames == 40
+
+    def test_rare_messages_are_left_out_of_a_signature(self):
+        """A one-off message makes two recordings of a bus look less alike.
+
+        Including everything split Rivian into seven buses where it has six.
+        The cutoff matches the one `infer` uses, so identifying buses from
+        frames and from inference results cannot disagree.
+        """
+        frames = from_frames(
+            [CanFrame(i * 1000, 0, 0x100, b"\x00" * 8, False) for i in range(40)]
+            + [CanFrame(i * 1000, 0, 0x999, b"\x00" * 8, False) for i in range(3)]
+        )
+        assert signatures(frames)[0].addresses == frozenset({0x100})
+        assert signatures(frames, min_frames=1)[0].addresses == frozenset({0x100, 0x999})
 
     def test_signatures_from_inferences_need_no_decode(self):
         found = signatures_from(

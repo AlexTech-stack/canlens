@@ -82,8 +82,17 @@ def overlap(a: Iterable[int], b: Iterable[int]) -> float:
     return len(first & second) / len(union) if union else 0.0
 
 
-def signatures(frames: FrameSet, *, min_frames: int = 1) -> list[BusSignature]:
-    """One signature per bus present in a decoded segment."""
+def signatures(frames: FrameSet, *, min_frames: int = 32) -> list[BusSignature]:
+    """One signature per bus present in a decoded segment.
+
+    Messages seen fewer than `min_frames` times are left out, matching what
+    `infer` keeps, so that identifying buses from frames and from inference
+    results gives the same answer. It is also the better signal: a message
+    that appeared once on one drive and not on the next makes two recordings
+    of the same bus look less alike than they are. Including everything split
+    Rivian into seven buses where it has six, and invented relabellings on
+    three other platforms.
+    """
     addresses: dict[int, set[int]] = {}
     counts: dict[int, int] = {}
     for message in frames.group(min_frames=min_frames):
