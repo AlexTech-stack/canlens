@@ -592,6 +592,68 @@ at 9, 10, 12 or 13 bits.
 The prior is real. It is just not a prior about the signals a trace can show
 you.
 
+### Shannon entropy, tested and rejected
+
+BinaryInferno (NDSS 2023) finds field boundaries in general binary protocols by
+comparing the Shannon entropy of adjacent bytes rather than how often bits
+flip. Entropy is a genuinely different statistic, and different in a promising
+direction: a 2-bit enum resting on one value for most of a drive has almost no
+transition rate but plenty of entropy. It was worth testing on the field
+canlens is worst at.
+
+**As a liveness test it is excellent.** Taking each reference signal whose bits
+move at all, across seven platforms:
+
+| declared width | rate ≥ 0.01 sees | entropy ≥ 0.10 sees |
+|---|---|---|
+| 1 bit | 34% | 96% |
+| 2 bits | 39% | 98% |
+| 3 bits | 40% | 100% |
+| 5–8 bits | 95% | 100% |
+| 9 bits and up | 99% | 100% |
+| **all** | **78%** | **99%** |
+
+**As a boundary test it is worthless.** Per-bit entropy is the entropy of a
+bit's duty cycle, and it saturates: anything not heavily skewed sits near 1.0.
+Comparing a bit to the one below it, the ratio has a median of 1.00 both inside
+a field and at a boundary. Cutting where it rises by half catches 4% of real
+boundaries while splitting 3% of real fields, which is no discrimination at
+all. Transition rate, over the same pairs, has a median of 0.58 inside a field
+against 0.92 at a boundary and cuts 18% against 3%.
+
+Combining them fails for a reason worth stating: **a bit admitted by a
+statistic that cannot segment it has nowhere to be cut.** Using entropy for
+liveness and rate for boundaries admits every slow narrow field and then runs
+them together into long merged claims. Scored over nine platform and DBC pairs,
+every threshold tried is worse than the rate floor alone:
+
+| liveness | boundary | precision | recall | F1 |
+|---|---|---|---|---|
+| rate ≥ 0.01 | rate ×3.0 | **51%** | 50% | **0.504** |
+| entropy ≥ 0.10 | rate ×3.0 | 46% | 52% | 0.489 |
+| entropy ≥ 0.50 | rate ×3.0 | 47% | 47% | 0.471 |
+| entropy ≥ 0.90 | rate ×3.0 | 43% | 34% | 0.378 |
+| entropy ≥ 0.50 | rate ×1.5 | 37% | 44% | 0.399 |
+
+**The faithful form fails for a different reason.** BinaryInferno compares the
+entropy of a byte's *value distribution*, which spans 0 to 8 bits rather than
+saturating, so it was tested separately. The statistic does carry information,
+and in the direction the paper describes: where a field spans a byte edge the
+upper byte's entropy is lower, median ratio 0.56, against 1.00 at a real edge
+between two fields. But as a cut it is unusable — the best threshold catches
+14% of real edges while wrongly splitting 40% of the fields that span one.
+
+The deeper problem is that the rule can only ever produce byte-aligned
+boundaries, and CAN signals are not byte-aligned. Of 4539 reference signals,
+**413 start on a byte boundary and have a length that is a multiple of eight;
+4126 do not**. BinaryInferno's own evaluation notes it does better on payloads
+because more of their fields are byte-aligned. That assumption is what makes it
+work there and what makes it inapplicable here.
+
+Entropy is not a worse statistic than transition rate. It answers a different
+question — *has this bit ever carried information* rather than *where does one
+number end* — and only the second question segments a payload.
+
 ### What is and is not claimed
 
 **Counters** must advance by a constant step *and* walk their whole range. Two

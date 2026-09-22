@@ -433,6 +433,14 @@ either side is wrong.
   drops the second and leaves a flag. Grouping by co-occurring transitions points the wrong way
   (46% agreement inside a signal against 59% across a boundary), because neighbouring slow
   fields both react to the ignition.
+- **Entropy answers a different question than transition rate.** Per-bit entropy sees 99% of
+  reference signals where the rate floor sees 78%, and 96% of 1-bit fields where the floor
+  sees 34% — but it cannot place a boundary: the ratio between adjacent bits has a median of
+  1.00 both inside a field and at an edge, because duty-cycle entropy saturates near 1. Using
+  entropy for liveness and rate for boundaries scores worse than rate alone at every threshold
+  (F1 0.489 against 0.504), because a bit admitted by a statistic that cannot segment it has
+  nowhere to be cut. BinaryInferno's byte-value form fails separately: it can only cut on byte
+  edges, and 4126 of 4539 reference signals are not byte-aligned.
 - **Do not trust a timing claim you did not measure in this codebase.** Lazy attribute access
   across the pycapnp boundary made an early "0.02 s parse" claim wrong by two orders of
   magnitude.
