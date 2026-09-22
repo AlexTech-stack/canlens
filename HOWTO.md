@@ -399,8 +399,8 @@ canlens infer trace <segment>/rlog.zst
 167 messages examined, 69 with findings: 79 counters, 69 checksums
 
 message        frames  counters                           checksums
-bus 0 0x024      4984  -                                  toyota@7 100%
-bus 1 0x210      1200  8bit@0 100%                        toyota@7 100%
+bus 0 0x024      4984  -                                  sum8_addr_len@7 100%
+bus 1 0x210      1200  8bit@0 100%                        sum8_addr_len@7 100%
 ```
 
 `8bit@0` is an 8-bit counter starting at bit 0; a `/n` suffix marks a step other
@@ -424,7 +424,7 @@ canlens infer message <segment>/rlog.zst --address 0x210 --bus 1
            ▁▁▁▁▁▁▁▂▂▂▂▂▂▂▂▂▂▂▂▃▃▃▃▃▃▃▃▃▃▃▃▃▄▄▄▄▄▄▄▄▄▄▄▄▅▅▅▅▅▅▅▅▅▅▅▅▆▆▆▆▆▆▆▆▆▆▆▆▆▇▇▇▇▇▇▇▇▇▇▇▇███████
            ████████████████████ 100.0% of steps
 
-  checksum byte 7, algorithm toyota
+  checksum byte 7, algorithm sum8_addr_len
            ████████████████████ 100.0% (1200/1200 frames)
 ```
 
@@ -698,7 +698,8 @@ detector existed. A counter that merely has its lowest bit locked to a
 two-frame schedule is kept.
 
 **Checksums** are only reported when a named algorithm *reproduces* the byte.
-The library is `sum8`, `sum8_complement`, `xor8`, `toyota`, `sum8_addr`, Honda's
+The library is `sum8`, `sum8_complement`, `xor8`, `sum8_addr`,
+`sum8_addr_len`, Honda's
 4-bit `honda_nibble`, and CRC-8 with
 polynomials 0x07, 0x1D (SAE J1850), and 0x2F; 16-bit CRCs and the AUTOSAR
 E2E Profile 1/11 form with a solved-for Data ID are searched separately. The simplest algorithm that
@@ -756,7 +757,8 @@ false positives were.
 `sum8_addr` was derived from the corpus rather than from a document. Solving
 for the additive constant that reproduces the checksum byte on the eleven
 messages `tesla_model3_party.dbc` names one on gives exactly `(address & 0xFF)
-+ (address >> 8)` every time, at a 100% match rate. It differs from `toyota`
++ (address >> 8)` every time, at a 100% match rate. It differs from
+`sum8_addr_len`
 only by the missing length term, and the two can never both fit the same
 message, since a payload length is between 1 and 64 and so never vanishes
 modulo 256. With it, Tesla scores 100% precision and 100% recall against its
@@ -769,9 +771,14 @@ Toyota — of which Tesla is two, and Subaru leans on it hardest at 1200 of the
 was found on, which made the name a claim about origin that the corpus does
 not support. A name is a hypothesis like any other here, and this one failed.
 
-`toyota` survives the same test: it fires on the Toyota group plus Mazda and
-Perodua, both of which build on licensed Toyota platforms. It is the same
-arithmetic as `sum8_addr` with the payload length added.
+`sum8_addr_len` was renamed on the same reasoning, though it failed the test
+less badly. It was `toyota`, and it does fire on the Toyota group plus Mazda
+and Perodua, both of which build on licensed Toyota platforms — 60 platforms
+in all. But the arithmetic carries nothing Toyota-specific: it is `sum8_addr`
+with the payload length added. A marque name on a generic sum is a claim about
+origin that the arithmetic does not make, and keeping one of the pair named
+after a car while its near-twin was renamed would have left the more
+misleading half standing.
 
 ### Volkswagen, and the difference one unknown makes
 
@@ -839,7 +846,7 @@ And the recovered Data IDs are not arbitrary:
 **162 of 162**. Each message's Data ID was solved independently, and they all
 land on one rule.
 
-This is also a preview of why the corpus matters: `toyota@7 100%` holding
+This is also a preview of why the corpus matters: `sum8_addr_len@7 100%` holding
 across 69 messages of one segment is suggestive, but holding across thousands
 of segments from hundreds of different drivers is proof — and that is
 `corroborate`'s job, not `infer`'s.
@@ -1316,7 +1323,7 @@ for message in infer_segment(path, root=root):
     for counter in message.counters:
         print(message, counter)      # "8-bit counter @ bit 0 (100.0%)"
     for checksum in message.checksums:
-        print(message, checksum)     # "toyota @ byte 7 (100.0%)"
+        print(message, checksum)     # "sum8_addr_len @ byte 7 (100.0%)"
 ```
 
 Bit numbering is **MSB-first within each byte**, matching how CAN signal

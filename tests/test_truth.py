@@ -188,10 +188,10 @@ class TestClaimedFields:
 
     def test_a_checksum_claims_its_whole_byte(self):
         claims = claimed_fields(
-            inference(checksums=[ChecksumHypothesis(7, "toyota", 1.0, 100)])
+            inference(checksums=[ChecksumHypothesis(7, "sum8_addr_len", 1.0, 100)])
         )
         claim = claims[FieldKind.CHECKSUM][0]
-        assert claim.bits == tuple(range(56, 64)) and claim.text == "toyota@byte7"
+        assert claim.bits == tuple(range(56, 64)) and claim.text == "sum8_addr_len@byte7"
 
     def test_a_wide_crc_claims_every_byte_it_covers(self):
         claims = claimed_fields(
@@ -202,7 +202,7 @@ class TestClaimedFields:
     def test_checksums_and_wide_crcs_pool_into_one_kind(self):
         """A DBC names both CHECKSUM and CRC without distinguishing width."""
         claims = claimed_fields(inference(
-            checksums=[ChecksumHypothesis(7, "toyota", 1.0, 100)],
+            checksums=[ChecksumHypothesis(7, "sum8_addr_len", 1.0, 100)],
             crc16s=[Crc16Hypothesis(2, "e2e_p05", "little", 1.0, 100)],
         ))
         assert len(claims[FieldKind.CHECKSUM]) == 2
@@ -287,7 +287,7 @@ class TestScore:
                 inference(
                     address=528,
                     counters=[CounterHypothesis(8, 4, 1, 1.0, 100)],
-                    checksums=[ChecksumHypothesis(7, "toyota", 1.0, 100)],
+                    checksums=[ChecksumHypothesis(7, "sum8_addr_len", 1.0, 100)],
                 ),
                 inference(address=1000, multiplexor=mux),
             ],

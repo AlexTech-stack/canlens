@@ -175,7 +175,7 @@ class TestHypotheses:
         assert not any(c.contested for c in m.counters)
 
     def test_checksums_at_one_byte_with_two_algorithms_are_contested(self):
-        obs = [("a", [message(checksums=[ChecksumHypothesis(7, "toyota", 1.0, 100)])]),
+        obs = [("a", [message(checksums=[ChecksumHypothesis(7, "sum8_addr_len", 1.0, 100)])]),
                ("b", [message(checksums=[ChecksumHypothesis(7, "sum8", 1.0, 100)])])]
         m = corroborate(obs)[(1, 0x210)]
         assert all(s.contested for s in m.checksums)

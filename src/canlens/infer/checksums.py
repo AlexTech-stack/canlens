@@ -40,8 +40,16 @@ def xor8(payload: bytes, address: int, index: int) -> int:
     return acc
 
 
-def toyota(payload: bytes, address: int, index: int) -> int:
-    """Toyota's checksum: byte sum folded together with the address and length."""
+def sum8_addr_len(payload: bytes, address: int, index: int) -> int:
+    """Byte sum folded together with the identifier and the payload length.
+
+    Called `toyota` until the name was tested rather than assumed. It fires on
+    60 platforms, and while those are the Toyota group plus Mazda and Perodua,
+    which build on licensed Toyota platforms, the arithmetic carries nothing
+    Toyota-specific: it is :func:`sum8_addr` with the length added. Naming a
+    generic sum after the first marque it turned up on is how `sum8_addr`
+    spent years called `tesla` while Subaru used it hardest.
+    """
     return (
         sum(_others(payload, index)) + (address & 0xFF) + ((address >> 8) & 0xFF) + len(payload)
     ) & 0xFF
@@ -62,11 +70,9 @@ def sum8_addr(payload: bytes, address: int, index: int) -> int:
     of the 1220 checksums found on an Outback. This is a default, not a
     manufacturer's trick, and the name now says so.
 
-    It differs from :func:`toyota` only by the missing length term, so the two
-    can never both fit the same message -- a payload length is between 1 and
-    64 and so never vanishes modulo 256. (By the same evidence `toyota` is
-    `sum8_addr` plus the length; that name is left alone because it fires
-    only on the Toyota group and Mazda, which licenses its platforms.)
+    It differs from :func:`sum8_addr_len` only by the missing length term, so
+    the two can never both fit the same message -- a payload length is between
+    1 and 64 and so never vanishes modulo 256.
     """
     return (
         sum(_others(payload, index)) + (address & 0xFF) + ((address >> 8) & 0xFF)
@@ -195,7 +201,7 @@ def v_xor8(matrix: np.ndarray, address: int, index: int) -> np.ndarray:
     return np.bitwise_xor.reduce(matrix, axis=1) ^ matrix[:, index]
 
 
-def v_toyota(matrix: np.ndarray, address: int, index: int) -> np.ndarray:
+def v_sum8_addr_len(matrix: np.ndarray, address: int, index: int) -> np.ndarray:
     folded = (
         _sum_without(matrix, index)
         + (address & 0xFF)
@@ -230,7 +236,7 @@ ALGORITHMS: dict[str, ChecksumFn] = {
     "sum8": sum8,
     "sum8_complement": sum8_complement,
     "xor8": xor8,
-    "toyota": toyota,
+    "sum8_addr_len": sum8_addr_len,
     "sum8_addr": sum8_addr,
     "crc8": _crc8_factory(0x07, 0x00, 0x00),
     "crc8_j1850": _crc8_factory(0x1D, 0xFF, 0xFF),
@@ -243,7 +249,7 @@ VECTOR_ALGORITHMS: dict[str, VectorFn] = {
     "sum8": v_sum8,
     "sum8_complement": v_sum8_complement,
     "xor8": v_xor8,
-    "toyota": v_toyota,
+    "sum8_addr_len": v_sum8_addr_len,
     "sum8_addr": v_sum8_addr,
     "crc8": _v_crc8_factory(0x07, 0x00, 0x00),
     "crc8_j1850": _v_crc8_factory(0x1D, 0xFF, 0xFF),

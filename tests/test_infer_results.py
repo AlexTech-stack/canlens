@@ -12,7 +12,7 @@ import pytest
 from canlens.decode import CanFrame, from_frames
 from canlens.decode.cache import Source
 from canlens.infer import INFER_VERSION, infer_frameset
-from canlens.infer.checksums import toyota
+from canlens.infer.checksums import sum8_addr_len
 from canlens.infer.results import (
     Key,
     clear_results,
@@ -28,7 +28,7 @@ def trace(count: int = 300) -> list[CanFrame]:
     out = []
     for i in range(count):
         body = bytearray([i % 256, *(rng.randrange(256) for _ in range(6)), 0])
-        body[7] = toyota(bytes(body), 0x210, 7)
+        body[7] = sum8_addr_len(bytes(body), 0x210, 7)
         out.append(CanFrame(i * 10_000_000, 1, 0x210, bytes(body), False))
     return out
 
@@ -56,7 +56,7 @@ class TestPayloadSampling:
         frames = from_frames(trace(300))
         result = infer_frameset(frames)[0]
         assert [(c.start_bit, c.length) for c in result.counters] == [(0, 8)]
-        assert [(s.byte_index, s.algorithm) for s in result.checksums] == [(7, "toyota")]
+        assert [(s.byte_index, s.algorithm) for s in result.checksums] == [(7, "sum8_addr_len")]
 
 
 class TestProfileReuse:

@@ -22,7 +22,7 @@ from canlens.infer import (
     score_algorithm,
     score_counter,
 )
-from canlens.infer.checksums import sum8, toyota, xor8
+from canlens.infer.checksums import sum8, sum8_addr_len, xor8
 
 
 def matrix_of(payloads: list[bytes]) -> np.ndarray:
@@ -121,7 +121,7 @@ class TestChecksumAlgorithms:
 
     def test_toyota_folds_in_the_address_and_length(self):
         # Same bytes, different address -> different checksum.
-        assert toyota(b"\x00" * 8, 0x100, 7) != toyota(b"\x00" * 8, 0x200, 7)
+        assert sum8_addr_len(b"\x00" * 8, 0x100, 7) != sum8_addr_len(b"\x00" * 8, 0x200, 7)
 
 
 class TestFindChecksums:
@@ -137,7 +137,7 @@ class TestFindChecksums:
             out.append(bytes(body))
         return out
 
-    @pytest.mark.parametrize("name", ["sum8", "toyota", "crc8_j1850", "crc8_2f"])
+    @pytest.mark.parametrize("name", ["sum8", "sum8_addr_len", "crc8_j1850", "crc8_2f"])
     def test_recovers_the_algorithm_that_built_the_data(self, name):
         found = find_checksums(self.build(name, 0x2C1), 0x2C1)
         assert [(f.byte_index, f.algorithm) for f in found] == [(7, name)]
@@ -157,7 +157,7 @@ class TestFindChecksums:
     def test_score_algorithm_reports_a_fraction(self):
         payloads = self.build("sum8", 0x1)
         assert score_algorithm(payloads, 0x1, 7, ALGORITHMS["sum8"]) == 1.0
-        assert score_algorithm(payloads, 0x1, 0, ALGORITHMS["toyota"]) < 0.5
+        assert score_algorithm(payloads, 0x1, 0, ALGORITHMS["sum8_addr_len"]) < 0.5
 
     def test_reports_nothing_for_random_payloads(self):
         rng = random.Random(11)
@@ -189,12 +189,12 @@ class TestInferMessage:
         payloads = []
         for i in range(400):
             body = bytearray([i % 256, *(rng.randrange(256) for _ in range(6)), 0])
-            body[7] = toyota(bytes(body), 0x210, 7)
+            body[7] = sum8_addr_len(bytes(body), 0x210, 7)
             payloads.append(bytes(body))
         result = infer_message(payloads, bus=1, address=0x210)
         assert result.found_anything
         assert any(c.start_bit == 0 and c.length == 8 for c in result.counters)
-        assert [(s.byte_index, s.algorithm) for s in result.checksums] == [(7, "toyota")]
+        assert [(s.byte_index, s.algorithm) for s in result.checksums] == [(7, "sum8_addr_len")]
 
     def test_candidate_bytes_track_movement(self):
         result = infer_message(counting_payloads(width=2), bus=0, address=1)
@@ -396,10 +396,10 @@ class TestSum8AddrChecksum:
 
     def test_it_is_distinguishable_from_toyota(self):
         """They differ by the length term, which never vanishes mod 256."""
-        from canlens.infer.checksums import sum8_addr, toyota
+        from canlens.infer.checksums import sum8_addr, sum8_addr_len
 
         payload = bytes([0] + [0x10] * 7)
-        assert sum8_addr(payload, 0x175, 0) != toyota(payload, 0x175, 0)
+        assert sum8_addr(payload, 0x175, 0) != sum8_addr_len(payload, 0x175, 0)
 
     def test_a_plain_sum_is_preferred_where_the_address_adds_nothing(self):
         """Address 0 folds to 0, so sum8 explains it and wins on simplicity."""
@@ -507,13 +507,13 @@ class TestChecksumEvidence:
 
     @staticmethod
     def static_frames(address, n=300, width=8):
-        from canlens.infer.checksums import honda_nibble, toyota
+        from canlens.infer.checksums import honda_nibble, sum8_addr_len
 
         body = bytearray([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00])
         body[-1] = (body[-1] & 0xF0) | honda_nibble(bytes(body), address)
         honda = [bytes(body)] * n
         plain = bytearray([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0])
-        plain[7] = toyota(bytes(plain), address, 7)
+        plain[7] = sum8_addr_len(bytes(plain), address, 7)
         return honda, [bytes(plain)] * n
 
     def test_a_static_message_yields_no_nibble_checksum(self):

@@ -16,7 +16,7 @@ import pytest
 from canlens.analyze import analyze_frames, analyze_frameset
 from canlens.decode import CanFrame, from_frames
 from canlens.infer import infer_frames, infer_frameset
-from canlens.infer.checksums import toyota
+from canlens.infer.checksums import sum8_addr_len
 
 
 def build(seed: int = 0, count: int = 400) -> list[CanFrame]:
@@ -25,7 +25,7 @@ def build(seed: int = 0, count: int = 400) -> list[CanFrame]:
     out = []
     for i in range(count):
         body = bytearray([i % 256, *(rng.randrange(256) for _ in range(6)), 0])
-        body[7] = toyota(bytes(body), 0x210, 7)
+        body[7] = sum8_addr_len(bytes(body), 0x210, 7)
         out.append(CanFrame(i * 10_000_000, 1, 0x210, bytes(body), False))
         out.append(CanFrame(i * 10_000_000, 0, 0x120, bytes([i % 7, 0xAA]), False))
         out.append(CanFrame(i * 10_000_000, 2, 0x120, bytes(body), True))  # echo
