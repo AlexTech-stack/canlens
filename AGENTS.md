@@ -83,7 +83,7 @@ It is gitignored and **must stay that way**. The upstream bucket is about 299 GB
 ./.venv/bin/ruff check . && ./.venv/bin/mypy src && ./.venv/bin/pytest -q
 ```
 
-684 tests, about 14 seconds. **No corpus data is required** — the suite runs on synthetic
+797 tests, about 16 seconds. **No corpus data is required** — the suite runs on synthetic
 payloads with known ground truth.
 
 ### 2.5 The pipe trap — read this, it has bitten this project three times
@@ -260,7 +260,7 @@ which actually uses a byte sum.
 
 ### 5.1 SPDX header on every new source file
 
-Two lines, after any shebang, matching the surrounding files. All 42 source files and all 27
+Two lines, after any shebang, matching the surrounding files. All 45 source files and all 30
 test files carry it; do not create one without it.
 
 ```python
@@ -423,6 +423,16 @@ either side is wrong.
   disagrees with itself 42% of the time. `corroborate/buses.py` reconciles them from identifier
   overlap before pooling, and `corroborate_platform` does so by default. Grouping segments by the
   logged number pools two different buses and calls the disagreement evidence.
+- **A narrow field is slow, and no rate floor will find it.** Reference signals of 1 to 3 bits
+  sit at a median transition rate near 0.005 while signals of 9 bits and up sit at 0.285: an
+  ignition switch does not run through its states, and a bit flipping fast *and* narrow is
+  nearly always the bottom of a wider number. Lowering `MIN_RATE` from 0.02 to 0.01 gained 43
+  signals, but of 37 measured gains only 3 were 3 bits or narrower and 28 were 8 bits or wider
+  — it recovered the *tops of wide fields*, where the rate decay runs out, not narrow ones. A
+  2-bit enum's high bit moves half as often as its low bit, so whatever floor admits the first
+  drops the second and leaves a flag. Grouping by co-occurring transitions points the wrong way
+  (46% agreement inside a signal against 59% across a boundary), because neighbouring slow
+  fields both react to the ignition.
 - **Do not trust a timing claim you did not measure in this codebase.** Lazy attribute access
   across the pycapnp boundary made an early "0.02 s parse" claim wrong by two orders of
   magnitude.

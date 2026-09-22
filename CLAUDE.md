@@ -53,7 +53,7 @@ Run all three before claiming anything is done:
 ./.venv/bin/ruff check . && ./.venv/bin/mypy src && ./.venv/bin/pytest -q
 ```
 
-684 tests, about 14 seconds, no corpus data required — the suite runs on synthetic payloads
+797 tests, about 16 seconds, no corpus data required — the suite runs on synthetic payloads
 with known ground truth.
 
 **Never pipe a gate command into `tail`/`head` without checking `PIPESTATUS`.** Doing so masked
@@ -137,7 +137,7 @@ platforms and Profile 6 from 139.
 ## Conventions
 
 **SPDX header on every new source file**, after any shebang, matching the surrounding files.
-All 42 source files and all 27 test files carry it.
+All 45 source files and all 30 test files carry it.
 
 ```python
 # Copyright 2026 Alexander Günther
@@ -218,6 +218,16 @@ than the function under test. Prefer synthetic payloads with known ground truth 
   number matches better, over 12 of 31 multi-segment platforms. `corroborate/buses.py` reconciles
   them from identifier overlap before anything is pooled, and `corroborate_platform` does this by
   default. Never group segments by the logged number without it.
+- **A narrow field is slow, and no rate floor will find it.** Reference signals of 1 to 3 bits
+  sit at a median transition rate near 0.005 while signals of 9 bits and up sit at 0.285: an
+  ignition switch does not run through its states, and a bit flipping fast *and* narrow is
+  nearly always the bottom of a wider number. Lowering `MIN_RATE` from 0.02 to 0.01 gained 43
+  signals, but of 37 measured gains only 3 were 3 bits or narrower and 28 were 8 bits or wider
+  — it recovered the *tops of wide fields*, where the rate decay runs out, not narrow ones. A
+  2-bit enum's high bit moves half as often as its low bit, so whatever floor admits the first
+  drops the second and leaves a flag. Grouping by co-occurring transitions points the wrong way
+  (46% agreement inside a signal against 59% across a boundary), because neighbouring slow
+  fields both react to the ignition.
 - **6 physical cores, 12 logical.** `default_jobs()` returns physical cores on purpose; the
   second thread of a core adds nothing to numpy-bound work.
 
