@@ -78,7 +78,7 @@ the status of `tail`, which always succeeds:
 | `decode/` | `rlog.zst` → columnar `FrameSet`, plus the npz frame cache |
 | `analyze/` | per-bit entropy/rate/classification and inter-arrival timing |
 | `infer/` | counters, checksums, CRC-16/32/64, every AUTOSAR E2E profile, multiplexors |
-| `corroborate/` | device-weighted agreement; pooled evidence for secrets one segment cannot check |
+| `corroborate/` | bus identification, device-weighted agreement, pooled evidence for secrets one segment cannot check |
 | `gui/` | PySide6 workbench: Data, Heat Map and Corroborate screens |
 | `export/` | BoAt PDU-database JSON |
 | `truth/` | opendbc DBCs as a reference, and precision/recall against them |
@@ -213,6 +213,11 @@ than the function under test. Prefer synthetic payloads with known ground truth 
   runs upward from it; a big-endian one runs *downward* and wraps to bit 7 of the next byte.
   Treating it as an MSB0 sawtooth and converting disagreed with cantools' own decoder on 895 of
   1070 signals. The rule in `truth/dbc.py` agrees on all 2925 signals of the 58 DBCs in opendbc.
+- **A logged bus number is a port, not a bus.** It comes from the logger's wiring and does not
+  always mean the same thing twice: across the corpus 293 of 5868 comparisons find a different
+  number matches better, over 12 of 31 multi-segment platforms. `corroborate/buses.py` reconciles
+  them from identifier overlap before anything is pooled, and `corroborate_platform` does this by
+  default. Never group segments by the logged number without it.
 - **6 physical cores, 12 logical.** `default_jobs()` returns physical cores on purpose; the
   second thread of a core adds nothing to numpy-bound work.
 

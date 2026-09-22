@@ -488,12 +488,28 @@ def cmd_corroborate(args) -> int:
         if done % 25 == 0 or done == total:
             print(f"  {done}/{total} segments", file=sys.stderr, flush=True)
 
-    result = corroborate_platform(args.platform, root=args.root, limit=args.limit, progress=progress)
+    result = corroborate_platform(
+        args.platform, root=args.root, limit=args.limit, progress=progress,
+        canonical_buses=not args.logged_buses,
+    )
     if not result.segments:
         print(f"canlens: nothing local for {args.platform}", file=sys.stderr)
         return 1
     print(f"{result.platform}: {result.segments} segments from {result.devices} devices, "
           f"{len(result)} messages")
+
+    buses = result.buses
+    if buses is not None and buses.identities:
+        print(f"\n{len(buses.identities)} buses, identified by the identifiers they carry:")
+        for identity in sorted(buses.identities, key=lambda i: i.label):
+            print(f"  {identity}")
+        if buses.relabelled:
+            print(f"  {buses.relabelled} (segment, bus) pairs were logged under another "
+                  f"number and have been moved.")
+        for number, sharing in sorted(buses.contested.items()):
+            print(f"  bus {number} names {len(sharing)} different buses across these "
+                  f"segments -- the car was recorded in more than one wiring.")
+    print()
 
     if args.address is not None:
         address = int(args.address, 0)
@@ -822,6 +838,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, help="use at most this many segments")
     p.add_argument("--top", type=int, default=40, help="rows in the overview (default: 40)")
     p.add_argument("--no-color", action="store_true", help="never emit ANSI colour")
+    p.add_argument(
+        "--logged-buses",
+        action="store_true",
+        help="group by the bus number as logged, without reconciling them",
+    )
     p.set_defaults(func=cmd_corroborate, op=None)
 
     p = sub.add_parser(

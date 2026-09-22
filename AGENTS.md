@@ -135,7 +135,7 @@ device and route. `corpus which` and the `[PLATFORM]` prefix on output are the w
 | `src/canlens/decode/` | `rlog.zst` → columnar `FrameSet`; npz frame cache | working |
 | `src/canlens/analyze/` | per-bit entropy, transition rate, classification; timing | working |
 | `src/canlens/infer/` | counters, checksums, CRC-16/32/64, AUTOSAR E2E, multiplexors | working |
-| `src/canlens/corroborate/` | device-weighted agreement; pooled evidence for secrets one segment cannot check | working |
+| `src/canlens/corroborate/` | bus identification, device-weighted agreement, pooled evidence | working |
 | `src/canlens/gui/` | PySide6 workbench: Data, Heat Map, Corroborate screens | working |
 | `src/canlens/export/` | BoAt PDU-database JSON | working |
 | `src/canlens/truth/` | opendbc DBCs as a reference; precision/recall against them | working |
@@ -160,6 +160,7 @@ fetching data never drags in a compiler toolchain. Do not add a third-party impo
 | Change cadence classification | `analyze/timing.py` |
 | Change cross-segment tiering | `corroborate/consensus.py` |
 | Change pooled-evidence solving | `corroborate/pooled.py` |
+| Change how buses are identified | `corroborate/buses.py` |
 | Change how a DBC is read | `truth/dbc.py` |
 | Change how findings are scored | `truth/score.py` |
 | Change what the GUI draws | `gui/window.py` (Qt) and `gui/model.py` (no Qt) |
@@ -415,6 +416,11 @@ either side is wrong.
   runs upward from it; a big-endian one runs *downward* and wraps to bit 7 of the next byte.
   Treating it as an MSB0 sawtooth and converting disagreed with cantools' own decoder on 895 of
   1070 signals. The rule in `truth/dbc.py` agrees on all 2925 signals of the 58 DBCs in opendbc.
+- **A logged bus number is a port, not a bus.** Across the corpus 293 of 5868 comparisons find
+  that a different number matches better, over 12 of 31 multi-segment platforms; the KIA EV6
+  disagrees with itself 42% of the time. `corroborate/buses.py` reconciles them from identifier
+  overlap before pooling, and `corroborate_platform` does so by default. Grouping segments by the
+  logged number pools two different buses and calls the disagreement evidence.
 - **Do not trust a timing claim you did not measure in this codebase.** Lazy attribute access
   across the pycapnp boundary made an early "0.02 s parse" claim wrong by two orders of
   magnitude.

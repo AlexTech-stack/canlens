@@ -30,9 +30,13 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from ..analyze.bits import KIND_ORDER, BitKind
 from ..infer import MessageInference
+
+if TYPE_CHECKING:
+    from .buses import BusMap
 
 # Tier thresholds -- heuristics for partitioning evidence, documented so they
 # can be argued with. A hypothesis is "established" when nearly every segment
@@ -220,6 +224,10 @@ class PlatformConsensus:
     segments: int
     devices: int
     messages: dict[tuple[int, int], MessageConsensus]
+    # How the logged bus numbers were reconciled, when they were. Bus numbers
+    # come from the logger's port assignment and do not always mean the same
+    # thing twice; see `canlens.corroborate.buses`.
+    buses: BusMap | None = None
 
     def __len__(self) -> int:
         return len(self.messages)
@@ -419,20 +427,53 @@ def _mark_contested(
 
 
 def corroborate_platform(
-    platform: str, *, root: str, limit: int | None = None, progress=None
+    platform: str,
+    *,
+    root: str,
+    limit: int | None = None,
+    progress=None,
+    canonical_buses: bool = True,
 ) -> PlatformConsensus:
-    """Corroborate every local segment of one platform, through the caches."""
+    """Corroborate every local segment of one platform, through the caches.
+
+    Bus numbers are reconciled before anything is pooled. A logged number is
+    the logger's port, not the bus, and across the corpus 293 of 5868
+    comparisons find that a different number matches better -- so grouping by
+    the logged number pools two different buses and calls the disagreement
+    evidence. `canonical_buses=False` restores the old behaviour for anyone
+    who wants to see it.
+    """
+    from dataclasses import replace
+
     from ..corpus import Manifest, inventory
     from ..infer import infer_cached
+    from .buses import identify_from, signatures_from
 
     manifest = Manifest.load(f"{root}/database.json")
     held = inventory(root, manifest).get(platform)
     paths = (held.paths if held else [])[:limit]
 
+    # One pass over the caches, reused for both the bus map and the pooling:
+    # the inferences carry bus, identifier and frame count, which is all a
+    # signature needs, so nothing is decoded twice.
+    cached = {path: infer_cached(path, root=root) for path in paths}
+    bus_map = None
+    if canonical_buses:
+        bus_map = identify_from(
+            platform, ((path, signatures_from(found)) for path, found in cached.items())
+        )
+
     def observations():
         for done, path in enumerate(paths, start=1):
-            yield device_of(path), infer_cached(path, root=root)
+            found = cached[path]
+            if bus_map is not None:
+                found = [
+                    replace(m, bus=bus_map.canonical(path, m.bus)) for m in found
+                ]
+            yield device_of(path), found
             if progress is not None:
                 progress(done, len(paths))
 
-    return corroborate(observations(), platform=platform)
+    result = corroborate(observations(), platform=platform)
+    result.buses = bus_map
+    return result

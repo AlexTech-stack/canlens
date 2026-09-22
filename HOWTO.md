@@ -718,6 +718,72 @@ Two hypotheses claiming the same bits with different parameters — two
 strides for one counter, two Data IDs for one CRC — are both kept and both
 marked **contested**; the evidence counts say which one the corpus backs.
 
+### A bus number is a port, not a bus
+
+Everything pooled above is grouped by `(bus, identifier)`, and the bus number
+comes from the logger's port assignment. Nothing guarantees the wire went into
+the same socket on the next drive.
+
+It often did not. Asking, for every bus of every segment, which bus in another
+segment of the same car shares the most identifiers, **293 of 5868 comparisons
+name a different number than the one logged**, across 12 of the 31 platforms
+holding more than one segment. The KIA EV6 disagrees with itself 42% of the
+time, the NMS Passat 33%, the Taos 24%; several platforms have segment pairs
+where the same number shares no identifiers at all.
+
+So `corroborate` reconciles the numbers before it pools anything:
+
+```
+KIA_EV6: 11 segments from 10 devices, 249 messages
+
+4 buses, identified by the identifiers they carry:
+  bus 0: 151 identifiers over 11 segments, 10 devices; logged as 0 in 6, 1 in 5
+  bus 1:  70 identifiers over 11 segments, 10 devices; logged as 0 in 5, 1 in 6
+  bus 2:   8 identifiers over  6 segments,  5 devices; logged as 2 in 6
+  bus 3:  20 identifiers over  5 segments,  5 devices; logged as 2 in 5
+  15 (segment, bus) pairs were logged under another number and have been moved.
+```
+
+The EV6 was recorded in two wirings, and the reconciliation finds it without
+being told: two buses each appear under both numbers, roughly half the
+segments each. `--logged-buses` turns the reconciliation off.
+
+**What it is worth.** On the EV6 the number of messages seen in *every* one of
+the eleven segments goes from **1 to 141**, and the median segments behind a
+message from 5 to 11. Before, each bus was split in half and every finding
+rested on the drives that happened to be wired one way. The message count falls
+from 404 to 249 because the 155 extra were the same messages counted twice,
+once under each number. On the Golf, where the numbering was always consistent,
+nothing changes at all.
+
+### How a bus is identified
+
+**The signal is the identifier set.** Two recordings of one bus carry mostly
+the same identifiers and two different buses carry almost none in common:
+across the corpus the medians are 0.99 and 0.04.
+
+**Payload width was tried as a second signal and dropped.** Counting only the
+shared identifiers that also agree on width gives 92.8% against 92.9% of pairs
+retained — indistinguishable. A message keeps its length wherever it appears,
+so width says nothing the identifier had not already said. It is recorded
+because the obvious next move is to add features, and this one measurably does
+not help.
+
+**Matching is an assignment, not a threshold.** One bus cannot be two buses, so
+each segment's buses are matched one-to-one against the identities already
+known, maximising total overlap rather than each picking its own best partner.
+That also avoids a calibration trap: a threshold would need ground truth, and
+the only ground truth available is the logged number, which is the thing in
+doubt. Under assignment the best pairing beats the runner-up by a median of
+0.65.
+
+**The majority keeps its name.** An identity is labelled with the number it was
+most often logged under, so output still reads like the bus numbers everyone
+knows. Sorting by support first matters more than it sounds: on the Audi A3 one
+segment's "bus 1" shares no identifiers with the other nineteen, and letting
+whichever identity appeared first claim the number renamed nineteen segments to
+describe one oddity. Now the nineteen keep the name and the one moves.
+
 ### Pooling segments for evidence
 
 The corroboration above pools *conclusions*: how many segments independently

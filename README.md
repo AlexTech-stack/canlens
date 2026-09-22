@@ -108,7 +108,7 @@ third-party package is skipped entirely.
 | `decode/` | `rlog.zst` → normalised CAN records — **working** |
 | `analyze/` | single-trace timing, entropy, per-bit classification — **working** |
 | `infer/` | counters, checksums, CRC-16/32/64, every AUTOSAR E2E profile, multiplexors — **working**; signal boundaries to do |
-| `corroborate/` | cross-segment agreement, device-weighted; pooled evidence for secrets one segment cannot check — **working** |
+| `corroborate/` | bus identification, cross-segment agreement, pooled evidence — **working** |
 | `gui/` | desktop workbench — **v0 working** |
 | `truth/` | opendbc ground truth, scoring the inference engine — **working** |
 | `export/` | BoAt PDU-database JSON — **working** |

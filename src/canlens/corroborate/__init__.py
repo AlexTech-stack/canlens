@@ -9,6 +9,16 @@ the spread of segments reveals bits -- rarely-changing states -- that no one
 trace can show at all.
 """
 
+from .buses import (
+    MIN_OVERLAP,
+    BusIdentity,
+    BusMap,
+    BusSignature,
+    assign,
+    identify_buses,
+    overlap,
+    signatures,
+)
 from .consensus import (
     ESTABLISHED_SUPPORT,
     MIN_DEVICES,
@@ -41,8 +51,12 @@ from .pooled import (
 __all__ = [
     "ESTABLISHED_SUPPORT",
     "MIN_DEVICES",
+    "MIN_OVERLAP",
     "PARTIAL_SUPPORT",
     "BitConsensus",
+    "BusIdentity",
+    "BusMap",
+    "BusSignature",
     "ChecksumConsensus",
     "CounterConsensus",
     "Crc16Consensus",
@@ -53,13 +67,17 @@ __all__ = [
     "Pool",
     "PooledFinding",
     "Tier",
+    "assign",
     "corroborate",
     "corroborate_p22",
     "corroborate_platform",
     "device_of",
     "evidence_growth",
+    "identify_buses",
+    "overlap",
     "pool_message",
     "pool_messages",
+    "signatures",
     "solve_p22",
     "unique_rows",
     "would_pass_alone",
