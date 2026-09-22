@@ -9,6 +9,13 @@ the spread of segments reveals bits -- rarely-changing states -- that no one
 trace can show at all.
 """
 
+from .boundaries import (
+    MIN_PLATFORMS,
+    BoundarySupport,
+    MessageBoundaries,
+    agree,
+    boundaries_across,
+)
 from .buses import (
     MIN_OVERLAP,
     BusIdentity,
@@ -54,8 +61,10 @@ __all__ = [
     "ESTABLISHED_SUPPORT",
     "MIN_DEVICES",
     "MIN_OVERLAP",
+    "MIN_PLATFORMS",
     "PARTIAL_SUPPORT",
     "BitConsensus",
+    "BoundarySupport",
     "BusIdentity",
     "BusMap",
     "BusSignature",
@@ -63,13 +72,16 @@ __all__ = [
     "CounterConsensus",
     "Crc16Consensus",
     "Evidence",
+    "MessageBoundaries",
     "MessageConsensus",
     "MultiplexConsensus",
     "PlatformConsensus",
     "Pool",
     "PooledFinding",
     "Tier",
+    "agree",
     "assign",
+    "boundaries_across",
     "corroborate",
     "corroborate_p22",
     "corroborate_platform",

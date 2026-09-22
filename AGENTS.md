@@ -115,6 +115,7 @@ ordering.
 ./.venv/bin/canlens infer message <segment>/rlog.zst --address 0x210 --bus 1
 ./.venv/bin/canlens corroborate KIA_EV6
 ./.venv/bin/canlens corroborate-pooled VOLKSWAGEN_GOLF_MK7  # needs many segments
+./.venv/bin/canlens corroborate-boundaries VOLKSWAGEN_GOLF_MK7 AUDI_A3_MK3 SKODA_OCTAVIA_MK3
 ./.venv/bin/canlens truth dbc <file.dbc>                 # what ground truth it offers
 ./.venv/bin/canlens truth score <segment>/rlog.zst --dbc <file.dbc>
 ./.venv/bin/canlens export pdu-db <segment>/rlog.zst -o out.json
@@ -441,6 +442,13 @@ either side is wrong.
   (F1 0.489 against 0.504), because a bit admitted by a statistic that cannot segment it has
   nowhere to be cut. BinaryInferno's byte-value form fails separately: it can only cut on byte
   edges, and 4126 of 4539 reference signals are not byte-aligned.
+- **Agreement across platforms is the strongest precision signal found so far.** Over 17 MQB
+  platforms, a start bit proposed by one platform is right 20% of the time and one proposed by
+  all of them 85% of the time, rising monotonically in between. Filtering to the established
+  tier takes signal precision from 53% to 73%; no single-platform threshold sweep reached past
+  the low fifties. It cannot invent a boundary, so recall is capped by `find_signals`. Widths
+  are reported as `at least n bits` from the group's widest claim, which is still short 67% of
+  the time and overshoots 13%. See `corroborate/boundaries.py`.
 - **Do not trust a timing claim you did not measure in this codebase.** Lazy attribute access
   across the pycapnp boundary made an early "0.02 s parse" claim wrong by two orders of
   magnitude.

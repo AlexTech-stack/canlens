@@ -611,6 +611,53 @@ def cmd_corroborate(args) -> int:
     return 0
 
 
+def cmd_corroborate_boundaries(args) -> int:
+    """Signal boundaries that several platforms sharing an architecture agree on."""
+    from .corroborate import Tier
+
+    tiers = {t.value: t for t in Tier}
+    minimum = tiers[args.min_tier]
+
+    def progress(done: int, total: int) -> None:
+        print(f"  {done}/{total} platforms read", file=sys.stderr, flush=True)
+
+    found = {}
+    from .corroborate import agree
+    from .corroborate.pooled import signals_across
+
+    by_platform = {}
+    for index, platform in enumerate(args.platforms, 1):
+        signals = signals_across(platform, root=args.root, limit=args.limit)
+        if signals:
+            by_platform[platform] = signals
+        progress(index, len(args.platforms))
+    found = agree(by_platform, min_platforms=args.min_platforms)
+
+    if not found:
+        print(
+            f"canlens: no message is carried by {args.min_platforms} or more of "
+            f"{len(by_platform)} platform(s), so nothing can be corroborated.",
+            file=sys.stderr,
+        )
+        return 1
+
+    kept = {k: v.at_least(minimum) for k, v in found.items()}
+    total = sum(len(v.supports) for v in found.values())
+    shown = sum(len(v) for v in kept.values())
+    print(
+        f"\n{len(by_platform)} platforms, {len(found)} shared messages, "
+        f"{total} start bits proposed, {shown} at {minimum} or better\n"
+    )
+    for key in sorted(kept):
+        supports = kept[key]
+        if not supports:
+            continue
+        print(f"{found[key]}")
+        for support in supports:
+            print(f"    {support}")
+    return 0
+
+
 def cmd_cache_build(args) -> int:
     """Decode and infer every local segment once, so later passes are hits.
 
@@ -896,6 +943,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="distinct cars required (default: %(default)s)",
     )
     p.set_defaults(func=cmd_corroborate_pooled, op=None)
+
+    p = sub.add_parser(
+        "corroborate-boundaries",
+        help="signal boundaries several platforms of one architecture agree on",
+    )
+    p.add_argument("platforms", nargs="+", help="platform keys sharing an architecture")
+    p.add_argument("--limit", type=int, help="segments per platform (default: all local)")
+    p.add_argument(
+        "--min-platforms", type=int, default=3,
+        help="platforms that must carry a message before it is judged (default: %(default)s)",
+    )
+    p.add_argument(
+        "--min-tier", default="partial",
+        choices=["weak", "partial", "consistent", "established"],
+        help="weakest agreement to report (default: %(default)s)",
+    )
+    p.set_defaults(func=cmd_corroborate_boundaries, op=None)
 
     cache = sub.add_parser("cache", help="decode segments once and keep the columns")
     cops = cache.add_subparsers(dest="op", required=True)

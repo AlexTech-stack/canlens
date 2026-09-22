@@ -592,6 +592,65 @@ at 9, 10, 12 or 13 bits.
 The prior is real. It is just not a prior about the signals a trace can show
 you.
 
+### Boundaries several platforms agree on
+
+Volkswagen's MQB platform puts address 0x120 on a Golf, a Tiguan, an Audi Q3
+and a Skoda Superb alike, and the pooled Profile 22 work already proved those
+are the same message: 25 addresses solved on more than one platform agreed on
+all sixteen Data ID bytes, 0x120 across seventeen of them. If the message is
+the same, its layout is the same — so a boundary only one platform proposes is
+probably an artefact of that platform's trace.
+
+`canlens corroborate-boundaries` tests that. Over the 176 messages that three
+or more of seventeen MQB platforms carry, scored against `vw_mqb.dbc`:
+
+| support across platforms | proposed | correct | precision |
+|---|---|---|---|
+| one platform only | 104 | 21 | 20% |
+| under half | 103 | 30 | 29% |
+| half to 89% | 67 | 34 | 51% |
+| 90% but not all | 13 | 11 | 85% |
+| every platform | 99 | 84 | 85% |
+| **all** | **386** | **180** | **47%** |
+
+Precision rises monotonically from 20% to 85%. A boundary's support is worth
+roughly as much as the boundary itself, which is the whole claim.
+
+Filtering on it buys precision at a predictable cost:
+
+| kept | precision | recall | F1 |
+|---|---|---|---|
+| everything | 53% | 47% | 0.500 |
+| partial and better | 61% | 45% | 0.518 |
+| established only | **73%** | 38% | 0.498 |
+
+The F1 gain is small and it would be dishonest to sell it as more. What is new
+is the **operating point**. Three claims in four being right is a different
+kind of artefact from one in two, and no amount of single-platform threshold
+tuning got anywhere near it — the rate floor, the rise factor and the C-width
+prior were all swept, and none moved precision past the low fifties.
+
+**It cannot invent a boundary.** A cut no platform proposed is not discovered
+by agreement, so recall is capped by what `find_signals` already produces.
+This ranks that output; it does not extend it.
+
+**Widths are a different story from start bits.** They disagree across
+platforms constantly, and not because the platforms disagree — a field's high
+bits only move once some driver exercises them, so each platform reports what
+its own cars happened to do. Every claim is a lower bound, so the group's
+widest claim is the best lower bound. Measured over the 129 corroborated
+boundaries whose start bit is right, the widest claim is exactly right 20% of
+the time against 17% for the median and 5% for the narrowest, and it is still
+short 67% of the time by a median of 3 bits. It overshoots 13% of the time,
+which is the rate at which treating it as a bound is simply wrong. It is
+reported as `at least n bits` because that is what it is.
+
+One limitation worth stating plainly: messages are matched by `(bus, address)`
+as logged. Bus numbers are reconciled *within* a platform, but nothing
+reconciles them *between* platforms yet, so a group wired differently across
+models matches fewer messages than it should. That fails towards fewer
+comparisons rather than wrong ones.
+
 ### Shannon entropy, tested and rejected
 
 BinaryInferno (NDSS 2023) finds field boundaries in general binary protocols by
