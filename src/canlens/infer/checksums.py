@@ -47,17 +47,26 @@ def toyota(payload: bytes, address: int, index: int) -> int:
     ) & 0xFF
 
 
-def tesla(payload: bytes, address: int, index: int) -> int:
-    """Tesla's checksum: byte sum folded with the address, and no length term.
+def sum8_addr(payload: bytes, address: int, index: int) -> int:
+    """Byte sum folded with the identifier, and no length term.
 
     Derived from the corpus rather than from a document: over the eleven
     messages `tesla_model3_party.dbc` names a checksum on, solving for the
     additive constant that reproduces the byte gives exactly
     `(address & 0xFF) + (address >> 8)` every time, at a 100% match rate.
 
+    It was called `tesla` until a corpus survey showed the name was a
+    misnomer -- it had been named after the first car it was found on. It
+    fires on 31 platforms across six makes (Lexus, Mazda, Nissan, Subaru,
+    Tesla, Toyota), of which Tesla is two. Subaru leans on it hardest, at 1200
+    of the 1220 checksums found on an Outback. This is a default, not a
+    manufacturer's trick, and the name now says so.
+
     It differs from :func:`toyota` only by the missing length term, so the two
     can never both fit the same message -- a payload length is between 1 and
-    64 and so never vanishes modulo 256.
+    64 and so never vanishes modulo 256. (By the same evidence `toyota` is
+    `sum8_addr` plus the length; that name is left alone because it fires
+    only on the Toyota group and Mazda, which licenses its platforms.)
     """
     return (
         sum(_others(payload, index)) + (address & 0xFF) + ((address >> 8) & 0xFF)
@@ -196,7 +205,7 @@ def v_toyota(matrix: np.ndarray, address: int, index: int) -> np.ndarray:
     return (folded & 0xFF).astype(np.uint8)
 
 
-def v_tesla(matrix: np.ndarray, address: int, index: int) -> np.ndarray:
+def v_sum8_addr(matrix: np.ndarray, address: int, index: int) -> np.ndarray:
     folded = _sum_without(matrix, index) + (address & 0xFF) + ((address >> 8) & 0xFF)
     return (folded & 0xFF).astype(np.uint8)
 
@@ -222,7 +231,7 @@ ALGORITHMS: dict[str, ChecksumFn] = {
     "sum8_complement": sum8_complement,
     "xor8": xor8,
     "toyota": toyota,
-    "tesla": tesla,
+    "sum8_addr": sum8_addr,
     "crc8": _crc8_factory(0x07, 0x00, 0x00),
     "crc8_j1850": _crc8_factory(0x1D, 0xFF, 0xFF),
     "crc8_2f": _crc8_factory(0x2F, 0xFF, 0xFF),
@@ -235,7 +244,7 @@ VECTOR_ALGORITHMS: dict[str, VectorFn] = {
     "sum8_complement": v_sum8_complement,
     "xor8": v_xor8,
     "toyota": v_toyota,
-    "tesla": v_tesla,
+    "sum8_addr": v_sum8_addr,
     "crc8": _v_crc8_factory(0x07, 0x00, 0x00),
     "crc8_j1850": _v_crc8_factory(0x1D, 0xFF, 0xFF),
     "crc8_2f": _v_crc8_factory(0x2F, 0xFF, 0xFF),
