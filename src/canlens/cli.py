@@ -611,6 +611,47 @@ def cmd_corroborate(args) -> int:
     return 0
 
 
+def cmd_infer_byte_order(args) -> int:
+    """Decide each bus's bit order from its own traffic."""
+    from .decode import load_frames
+    from .infer import decide_byte_order, infer_segment
+
+    frames = load_frames(args.path, root=args.root)
+    spoken: dict[tuple[int, int], set[int]] = {}
+    for message in infer_segment(args.path, root=args.root):
+        bits = spoken.setdefault(message.key, set())
+        for counter in message.counters:
+            bits |= set(range(counter.start_bit, counter.end_bit))
+        for checksum in message.checksums:
+            bits |= set(range(checksum.start_bit, checksum.start_bit + checksum.length))
+        for crc in message.crc16s:
+            bits |= set(range(crc.start_byte * 8, (crc.start_byte + crc.nbytes) * 8))
+
+    found = decide_byte_order(
+        [
+            (g.bus, g.bytes_matrix(), spoken.get(g.key, set()))
+            for g in frames.group(min_frames=args.min_frames)
+        ]
+    )
+    if not found:
+        print("canlens: no message carried enough frames to judge.", file=sys.stderr)
+        return 1
+    print()
+    for order in found.values():
+        print(f"  {order}")
+    print(
+        "\nA bus is decided by counting fields of 9 bits or more: those cannot fit\n"
+        "inside one byte, so they read as a single run only in the correct order."
+    )
+    undecided = [o for o in found.values() if not o.decided]
+    if undecided:
+        print(
+            f"{len(undecided)} bus(es) undecided -- too few long fields, or too close\n"
+            "to call. Intel is the default and stays in force for those."
+        )
+    return 0
+
+
 def cmd_corroborate_boundaries(args) -> int:
     """Signal boundaries that several platforms sharing an architecture agree on."""
     from .corroborate import Tier
@@ -860,6 +901,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     infer = sub.add_parser("infer", help="find counters and checksums")
     iops = infer.add_subparsers(dest="op", required=True)
+
+    p = iops.add_parser(
+        "byte-order", help="decide each bus's bit order from its own traffic"
+    )
+    p.add_argument("path", help="path to rlog.zst")
+    p.add_argument(
+        "--min-frames", type=int, default=32,
+        help="frames a message needs to be considered (default: %(default)s)",
+    )
+    p.set_defaults(func=cmd_infer_byte_order)
 
     for name, func, help_text in (
         ("trace", cmd_infer_trace, "every finding in one segment"),

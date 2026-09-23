@@ -650,7 +650,7 @@ Worth recording alongside: on that per-bit metric the existing rate-ratio rule
 scores 0.660, which is not a weak boundary detector. The difficulty canlens
 reports is almost entirely the whole-field requirement, not the cut rule.
 
-### The Motorola search, measured and not shipped
+### The Motorola search, decided per bus
 
 Bit order is a parameter here and has never been searched. Since Rivian's DBC
 is 97% big-endian and the Prius' is 100%, against 0% for Volkswagen MQB, that
@@ -696,31 +696,63 @@ actually move, and therefore could be found:
 | Rivian R1 | 37 | 11 | 30% |
 | Toyota Prius | 29 | 12 | 41% |
 
-**Picking the order from the trace does not work.** Within a byte the two
-orders give the same adjacencies, so only the byte *seams* differ — which is
-exactly CAN-D's Definition 2. Whole-message objectives (bits covered, mean
-field length, monotone-decay share) reach 75% at best and are biased rather
-than discriminative. A seam-focused objective gets little-endian messages
-right 97% of the time and big-endian ones 38%, which is worse than a coin.
+**Deciding per message does not work.** Within a byte the two orders give the
+same adjacencies, so only the byte *seams* differ — which is exactly CAN-D's
+Definition 2. Whole-message objectives (bits covered, mean field length,
+monotone-decay share) reach 75% at best and are biased rather than
+discriminative. A seam objective gets little-endian messages right 97% of the
+time and big-endian ones 38%, worse than a coin. Running both orders and
+keeping the wrapping claims Intel cannot express gives **10 right against 78
+wrong** across five platforms, including 20 wrong on each Volkswagen platform
+where there is nothing to find.
 
-**And a second pass costs more than it gains.** Running the detector in
-reversed-Motorola order and keeping only the wrapping claims, which is the
-part Intel cannot express, yields **10 right against 78 wrong** across five
-platforms — including 20 wrong on each Volkswagen platform, where there is
-nothing to find. No width gate rescues it: requiring 12 bits or more leaves 7
-right against 29 wrong, and requiring 16 leaves none right at all.
+**Deciding per bus does work**, because byte order is a property of the bus
+rather than of a signal. Across the 43 opendbc databases with twenty or more
+signals the median share of signals in their database's dominant order is
+**100%**, and 37 of 43 are at least 90% one order. Better still, the
+exceptions cost almost nothing: since a single-byte field is the same bits
+either way, only a *minority-order field that wraps a byte* is mishandled by
+assuming one order throughout — a median of 0.00% of signals, a mean of 0.10%,
+and **41 of the 43 databases pay nothing at all**.
 
-So Motorola stays unsearched, now for a measured reason rather than an
-unexamined one. The mechanism above is the recipe if the underlying detector
-ever gets precise enough to afford the second pass.
+The evidence is long fields. A field of nine bits or more cannot fit inside a
+byte, so it reads as one contiguous run of decaying rate only in the correct
+order; in the wrong one it is split at the seam. Counting those under each
+order and taking the larger count picks the right order on **8 of 9 buses**.
+The one it gets wrong is also the least decided, a 6% margin where the
+narrowest correct answer sits at 12%, so `MIN_MARGIN` abstains rather than
+guesses.
+
+```
+canlens infer byte-order <segment>
+
+  bus 0: motorola (5 intel / 14 motorola long fields over 50 messages, margin 47%)
+  bus 1: motorola (100 intel / 152 motorola long fields over 132 messages, margin 21%)
+  bus 2: motorola (1 intel / 2 motorola long fields over 19 messages, margin 33%)
+```
+
+Every bus of a Rivian reads Motorola, every bus of a Golf reads Intel, and a
+Prius bus carrying eight messages and no long field is reported undecided
+instead of guessed — which is the behaviour the margin exists to produce.
+
+Scored on those buses, detecting in the decided order rather than always Intel
+takes a Rivian from 2% precision and 3% recall to **14% and 18%**, and a Prius
+from nothing at all to **13% and 23%**. Volkswagen platforms get *worse* under
+Motorola, as they must, and that is the control that says this measures the
+bus rather than flattering the detector.
+
+**What is not done yet.** `infer` still detects in Intel order regardless; the
+decision is reported, not yet applied. Wiring it in means carrying a byte
+order on every claim so that `truth`, `export` and the workbench all agree on
+what a `StartPos` means.
 
 One correction this measurement forced. The correlation between a DBC's
 big-endian share and canlens' score on it is real — the Prius and Rivian score
-18% precision where Volkswagen platforms score 49–57% — but endianness is not
-what causes it. Most of their signals are single-byte and already order-
-agnostic. What those platforms actually have is very few signals that move at
-all: 29 and 37 scorable against 133 on a Golf. The scores are low, and noisy,
-for want of data rather than for want of a bit order.
+18% precision where Volkswagen platforms score 49–57% — but endianness is only
+part of the cause. Most of their signals are single-byte and already
+order-agnostic, and those platforms also have very few signals that move at
+all: 29 and 37 scorable against 133 on a Golf. The bit order is worth fixing;
+it is not the whole of the gap.
 
 ### Boundaries several platforms agree on
 

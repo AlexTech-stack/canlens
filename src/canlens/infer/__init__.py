@@ -8,6 +8,13 @@ the trace rather than guessed at from how a bit looks. Corroborating a finding
 across many traces is :mod:`canlens.corroborate`'s job.
 """
 
+from .byteorder import (
+    LONG_FIELD,
+    MIN_MARGIN,
+    BusOrder,
+    decide_byte_order,
+    motorola_columns,
+)
 from .checksums import (
     ALGORITHMS,
     ChecksumHypothesis,
@@ -50,6 +57,9 @@ __all__ = [
     "ALGORITHMS",
     "CRC16_ALGORITHMS",
     "INFER_VERSION",
+    "LONG_FIELD",
+    "MIN_MARGIN",
+    "BusOrder",
     "ChecksumHypothesis",
     "CounterHypothesis",
     "Crc16Hypothesis",
@@ -59,6 +69,7 @@ __all__ = [
     "checksum_candidate_bytes",
     "clear_results",
     "crc16_autosar",
+    "decide_byte_order",
     "e2e_crc8",
     "e2e_p05",
     "field_values",
@@ -76,6 +87,7 @@ __all__ = [
     "infer_message",
     "infer_message_columnar",
     "infer_segment",
+    "motorola_columns",
     "p01_low_id",
     "score_algorithm",
     "score_counter",

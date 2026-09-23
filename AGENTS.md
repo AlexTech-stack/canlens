@@ -468,19 +468,21 @@ either side is wrong.
 - **Scaling and units.** No factor, offset or unit is ever inferred.
 - **Signals inside a multiplexed layout.** The selector is found and its per-value layouts are
   drawn, but no detector runs separately within each selector value.
-- **Motorola search.** Bit order is a parameter, not something searched — measured, then left
-  that way. Byte order is *unobservable* for a field inside one byte: all 224 single-byte
-  layouts have an identical little-endian twin, differing only in which end the DBC calls
-  `StartPos`, and single-byte fields are 83-91% of every reference DBC. Since `truth/score.py`
-  compares by bit set rather than start position, those already match whichever convention the
-  DBC used. Only fields wrapping a byte boundary are genuinely unreachable, and they are 0% of
-  Volkswagen's scorable signals, 8% of Tesla's, 30% of Rivian's and 41% of the Prius'. A second
-  pass in reversed-Motorola order finds 10 of them across five platforms and invents 78,
-  including 20 on each Volkswagen platform where there is nothing to find, so it is not
-  enabled. The working mechanism, if it is ever affordable: unpack MSB-first, then reverse the
-  whole vector end to end, which makes a big-endian field contiguous with its rate decaying
-  upward (verified on all 344 layouts). Plain MSB-first order is not enough — the rate climbs
-  along the field and the cut rule fires inside it.
+- **Motorola search.** The bus's bit order is now *decided* but not yet *applied*: run
+  `canlens infer byte-order <segment>` (`infer/byteorder.py`); detection itself still runs in
+  Intel order everywhere. Byte order is a property of the bus, not of a signal — across the 43
+  opendbc databases with 20+ signals the median share in the dominant order is 100%, and
+  assuming one order per bus costs a median of 0.00% of signals (mean 0.10%, 41 of 43 pay
+  nothing) because a single-byte field is the same bits under either convention and only a
+  minority-order field that *wraps* a byte is mishandled. The evidence is fields of 9 bits or
+  more, which cannot fit inside a byte and so read as one run only in the correct order: that
+  picks right on 8 of 9 buses, and below a 10% margin the bus is reported undecided rather
+  than guessed. Detecting in the decided order takes a Rivian from 2%/3% precision/recall to
+  14%/18% and a Prius from nothing to 13%/23%, while Volkswagen platforms get worse under
+  Motorola, which is the control. The mechanism: unpack MSB-first, then reverse the whole
+  vector end to end, which makes a big-endian field contiguous with its rate decaying upward
+  (verified on all 344 layouts). Plain MSB-first is not enough and fails quietly — the rate
+  climbs along the field and the cut rule fires inside it.
 - **Variable-length E2E.** Profiles 4 and 7 are claimed only where Length is fixed across the
   trace, which is the honest scope of the check.
 
