@@ -77,6 +77,31 @@ class TestLayoutView:
         view.show_row(plain_model(), 0)
         assert view.isHidden()
 
+    def test_layout_fields_are_boxed_on_their_value_row(self, qt_app):
+        from canlens.infer.layouts import LayoutField
+
+        m = model_with(2)
+        m.rows[0].inference.layout_fields = [
+            LayoutField(8, 8, mux_value=0, value=0x10, frames=150),
+            LayoutField(8, 8, mux_value=1, value=0x20, frames=150),
+        ]
+        view = LayoutView()
+        view.show_row(m, 0)
+        assert len(view._field_boxes) == 2
+
+    def test_field_boxes_go_away_when_a_plain_row_is_shown(self, qt_app):
+        from canlens.infer.layouts import LayoutField
+
+        m = model_with(2)
+        m.rows[0].inference.layout_fields = [
+            LayoutField(8, 8, mux_value=0, value=0x10, frames=150),
+        ]
+        view = LayoutView()
+        view.show_row(m, 0)
+        assert view._field_boxes
+        view.show_row(plain_model(), 0)
+        assert view._field_boxes == []
+
 
 class TestDetailPanelWiring:
     def test_show_row_drives_the_layout_view(self, qt_app):

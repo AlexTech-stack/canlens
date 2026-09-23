@@ -328,6 +328,19 @@ class SegmentModel:
                     byte_order=MOTOROLA if motorola else INTEL,
                 )
             )
+        for layout in row.inference.layout_fields:
+            if (layout.start_bit, layout.length) in named:
+                continue
+            out.append(
+                self._derived_entry(
+                    index, f"Layout_{layout.mux_value}", layout.start_bit, layout.length,
+                    f"canlens: selector value {layout.mux_value} holds "
+                    f"{layout.value} (0x{layout.value:02X})",
+                    named,
+                    mux_value=layout.mux_value,
+                    constant=float(layout.value),
+                )
+            )
         for crc in row.inference.crc16s:
             detail = "" if crc.data_id is None else f", data ID 0x{crc.data_id:04X}"
             out.append(
@@ -343,20 +356,30 @@ class SegmentModel:
     def _derived_entry(
         self, index: int, name: str, start: int, length: int, comment: str,
         named: set[tuple[int, int]], byte_order: int = INTEL,
+        mux_value: int | None = None, constant: float | None = None,
     ) -> SignalEntry | None:
         # A hand-given name wins: the user looked at it.
         if (start, length) in named:
             return None
-        values = self.field_series(index, start, length)
+        if constant is None:
+            values = self.field_series(index, start, length)
+            minimum = float(values.min()) if values.size else 0.0
+            maximum = float(values.max()) if values.size else 0.0
+            init = float(values[0]) if values.size else 0.0
+        else:
+            # A layout field is a single value under its selector value; the
+            # whole-trace series would mix in every other value's content.
+            minimum = maximum = init = constant
         return SignalEntry(
             name=name,
             start_bit=start,
             length=length,
             byte_order=byte_order,
-            minimum=float(values.min()) if values.size else 0.0,
-            maximum=float(values.max()) if values.size else 0.0,
-            init_value=float(values[0]) if values.size else 0.0,
+            minimum=minimum,
+            maximum=maximum,
+            init_value=init,
             comment=comment,
+            mux_value=mux_value,
         )
 
     def bus_groups(self) -> list[tuple[int, int, int]]:

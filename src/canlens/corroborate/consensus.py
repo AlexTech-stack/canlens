@@ -23,6 +23,14 @@ are reported as *rare* bits.
 
 Everything here consumes cached inference results, so corroborating a platform
 costs a few milliseconds per segment once the cache is warm.
+
+**What is not corroborated here.** This module tallies the verified arithmetic:
+counters, checksums, CRCs and the selector itself. Ordinary signals are ranked
+separately, across platforms that share a message, by
+:mod:`canlens.corroborate.boundaries`. The constants a selector value picks out
+(``MessageInference.layout_fields``) are not corroborated yet -- doing so means
+comparing each value's content across cars, which is a natural next step rather
+than part of this pass.
 """
 from __future__ import annotations
 

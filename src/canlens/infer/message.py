@@ -30,6 +30,7 @@ from .checksums import (
 )
 from .counters import CounterHypothesis, find_counters
 from .crc16 import Crc16Hypothesis, find_crc16
+from .layouts import LayoutField, read_layout_fields
 from .multiplex import MultiplexHypothesis, find_multiplexor
 from .signals import SignalHypothesis
 
@@ -70,6 +71,7 @@ class MessageInference:
     checksums: list[ChecksumHypothesis] = field(default_factory=list)
     crc16s: list[Crc16Hypothesis] = field(default_factory=list)
     multiplexor: MultiplexHypothesis | None = None
+    layout_fields: list[LayoutField] = field(default_factory=list)
     signals: list[SignalHypothesis] = field(default_factory=list)
 
     @property
@@ -83,6 +85,7 @@ class MessageInference:
             or self.checksums
             or self.crc16s
             or self.multiplexor
+            or self.layout_fields
             or self.signals
         )
 
@@ -188,6 +191,11 @@ def _build(
         skip_bytes=explained_bytes,
         counter_bits={b for c in counters for b in range(c.start_bit, c.end_bit)},
     )
+    # What each selector value selects: the whole-byte constants among the
+    # dependent bits. Read on the same Intel matrix the selector was found in.
+    layout_fields = (
+        read_layout_fields(matrix, multiplexor) if multiplexor is not None else []
+    )
     kept = outside_multiplex(outside_checksums(counters, checksums, crc16s), multiplexor)
 
     # Last, over whatever nothing else explained. A signal is the weakest
@@ -198,6 +206,16 @@ def _build(
         spoken_for.update(range(counter.start_bit, counter.end_bit))
     if multiplexor is not None:
         spoken_for.update(range(multiplexor.start_bit, multiplexor.end_bit))
+    # A layout constant explains its byte the same way a checksum explains
+    # its own: under each selector value the byte holds a known value, so
+    # there is nothing left for a signal to be. Without this the two stages
+    # both claim it -- 9 of 133 multiplexed messages over 60 corpus segments,
+    # 115 bits, at worst a byte read as 16 layout constants *and* as two
+    # 4-bit signals, which cannot both be true. This line settles 5 of those
+    # messages; the rest are on Motorola buses, whose signal pass is redone
+    # in `apply_bus_order` and excluded there too.
+    for layout in layout_fields:
+        spoken_for.update(layout.bits)
     # The bus's bit order, decided once for the whole bus by
     # `infer.byteorder` and passed down. Intel unless something says otherwise.
     signals = find_signals_in(
@@ -217,6 +235,7 @@ def _build(
         checksums=checksums,
         crc16s=crc16s,
         multiplexor=multiplexor,
+        layout_fields=layout_fields,
         signals=signals,
     )
 
@@ -332,6 +351,14 @@ def apply_bus_order(
 
     A bus below `byteorder.MIN_MARGIN` is left as Intel, which is the default
     and the thing to fall back to when the traffic will not say.
+
+    The re-run excludes layout fields as well as the verified detectors, for
+    the same reason `_build` does: a byte a selector value pins to a constant
+    is already explained. The *decision* deliberately does not -- it counts
+    long fields over `claimed_bits_of` alone, and adding layout bits there
+    moved the verdict on 2 of 176 corpus buses, one gaining a verdict and one
+    losing it. That is a calibrated threshold (`byteorder.MIN_MARGIN`, set
+    against nine buses) and not something a collision fix should disturb.
     """
     from .byteorder import decide_byte_order
 
@@ -353,12 +380,15 @@ def apply_bus_order(
     out = []
     for message in found:
         if message.bus in motorola and message.key in byte_matrices:
+            spoken_for = claimed[message.key] | {
+                bit for layout in message.layout_fields for bit in layout.bits
+            }
             message = replace(
                 message,
                 signals=find_signals_in(
                     byte_matrices[message.key],
                     BitOrder.MOTOROLA,
-                    claimed_bits=claimed[message.key],
+                    claimed_bits=spoken_for,
                 ),
             )
         out.append(message)

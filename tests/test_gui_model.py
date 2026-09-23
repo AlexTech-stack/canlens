@@ -398,6 +398,20 @@ class TestExportBridge:
         assert entry.address == 0x100 and entry.length == 2 and entry.bus == 0
         assert entry.extended is False
 
+    def test_layout_fields_are_exported_under_their_selector_value(self):
+        from canlens.infer import infer_message
+
+        slices = (b"AAAAAAA", b"BBBBBBB", b"CCCCCCC")
+        payloads = [bytes([i % 3]) + slices[i % 3] for i in range(600)]
+        m = model_with_payloads(payloads, width=8)
+        m.rows[0].inference = infer_message(payloads, bus=0, address=0x100)
+        entry = m.export_messages()[0]
+        layouts = [s for s in entry.signals if s.name.startswith("Layout_")]
+        assert layouts and all(s.mux_value is not None for s in layouts)
+        # Byte 1 under value 1 holds the constant 'B', not the whole-trace mix.
+        byte1 = next(s for s in layouts if s.mux_value == 1 and s.start_bit == 8)
+        assert byte1.minimum == byte1.maximum == byte1.init_value == ord("B")
+
 
 class TestModelFiltering:
     @staticmethod

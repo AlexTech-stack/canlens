@@ -177,6 +177,7 @@ def cmd_infer_trace(args) -> int:
         f"{sum(len(m.checksums) for m in hits)} checksums, "
         f"{sum(len(m.crc16s) for m in hits)} 16-bit CRCs, "
         f"{sum(m.multiplexor is not None for m in hits)} multiplexors, "
+        f"{sum(len(m.layout_fields) for m in hits)} layout fields, "
         f"{sum(len(m.signals) for m in hits)} signals"
     )
     if not hits:
@@ -265,6 +266,10 @@ def cmd_infer_message(args) -> int:
     if result.multiplexor is not None:
         mux = result.multiplexor
         marks.update(dict.fromkeys(range(mux.start_bit, mux.end_bit), FIELD_MARKS["mux"]))
+    for field in result.layout_fields:
+        marks.update(
+            dict.fromkeys(range(field.start_bit, field.end_bit), FIELD_MARKS["layout"])
+        )
     for signal in result.signals:
         marks.update(
             dict.fromkeys(range(signal.start_bit, signal.end_bit), FIELD_MARKS["signal"])
@@ -288,6 +293,11 @@ def cmd_infer_message(args) -> int:
         print(f"           {bar(mux.coverage)} {mux.coverage:.1%} of frames carry a listed value")
         for value, count in zip(mux.values, mux.frames_per_value):
             print(f"           value {value:>3}: {count} frames")
+        for value in mux.values:
+            fields = [f for f in result.layout_fields if f.mux_value == value]
+            if fields:
+                shown = ", ".join(f"b{f.start_bit // 8}={f.value}" for f in fields)
+                print(f"           layout {value:>3}: {shown}")
     for c in result.counters:
         values = field_values(matrix, c.start_bit, c.length).tolist()
         print(f"\n  counter  {c.length} bits @ bit {c.start_bit}, step {c.stride}, "

@@ -53,7 +53,7 @@ Run all three before claiming anything is done:
 ./.venv/bin/ruff check . && ./.venv/bin/mypy src && ./.venv/bin/pytest -q
 ```
 
-869 tests, about 17 seconds, no corpus data required — the suite runs on synthetic payloads
+886 tests, about 17 seconds, no corpus data required — the suite runs on synthetic payloads
 with known ground truth.
 
 **Never pipe a gate command into `tail`/`head` without checking `PIPESTATUS`.** Doing so masked
@@ -77,7 +77,7 @@ the status of `tail`, which always succeeds:
 | `corpus/` | manifest, selective fetch, local accounting. **Deliberately stdlib-only** |
 | `decode/` | `rlog.zst` → columnar `FrameSet`, plus the npz frame cache |
 | `analyze/` | per-bit entropy/rate/classification and inter-arrival timing |
-| `infer/` | counters, checksums, CRC-16/32/64, every E2E profile, multiplexors, signal boundaries |
+| `infer/` | counters, checksums, CRC-16/32/64, every E2E profile, multiplexors, per-value layout constants, signal boundaries |
 | `corroborate/` | bus identification, device-weighted agreement, pooled evidence for secrets one segment cannot check, boundaries several platforms agree on |
 | `gui/` | PySide6 workbench: Data, Heat Map and Corroborate screens |
 | `export/` | BoAt PDU-database JSON |
@@ -111,10 +111,10 @@ Counters need 0.95, everything else 0.99.
 
 **3. Detector order in `_build()` is load-bearing.** `infer/message.py` runs candidate bytes →
 counters → plain checksums → Honda's nibble → E2E 1/11 → width-gated E2E 22/6/4/7 → CRC-16
-  and E2E 5 → multiplexor → two counter cleanups → signals over whatever is left, then the
-  value-jumpiness precision filter (`infer/smoothness.py`). Each stage receives only the byte
-  positions nothing simpler has explained. Reordering changes results; a plain sum would get
-  reported as an exotic CRC.
+  and E2E 5 → multiplexor, then the whole-byte constants each value selects (`infer/layouts.py`)
+  → two counter cleanups → signals over whatever is left, then the value-jumpiness precision
+  filter (`infer/smoothness.py`). Each stage receives only the byte positions nothing simpler
+  has explained. Reordering changes results; a plain sum would get reported as an exotic CRC.
 
 **4. Echoes are not data.** `CanData.src >= 128` marks a frame the device itself put on the
 wire, on bus `src - 128`. They are 30–46% of a segment and reproduce the source bus's address
@@ -143,7 +143,7 @@ platforms and Profile 6 from 139.
 ## Conventions
 
 **SPDX header on every new source file**, after any shebang, matching the surrounding files.
-All 48 source files and all 33 test files carry it.
+All 49 source files and all 34 test files carry it.
 
 ```python
 # Copyright 2026 Alexander Günther
@@ -258,6 +258,20 @@ than the function under test. Prefer synthetic payloads with known ground truth 
   both *lower* F1. It is a filter, not a segmenter; it cannot split a merged field, and a
   carry-based split of one was measured and rejected because real signals are signed and
   offset around a midpoint, not natural-binary. See `infer/smoothness.py`.
+- **A multiplexor's value selects constants, not wide signals.** The flagship VIN message is a
+  table of whole bytes constant under each selector value, and the moving mux fields a DBC
+  declares are narrow (2-bit) state enums, which the rate floor cannot see. So the reader
+  reports the whole-byte constant per value (`infer/layouts.py`), not per-layout signals;
+  scored against opendbc it recovers the VIN exactly (P 0.98, all 27 misses sub-byte Tesla
+  fields no rule got) and lifts the signal tally over 25 segments from F1 0.622 to 0.700.
+  Whole-byte grouping was chosen by scoring three rules; the others recovered nothing because
+  a run of *dependent* bits is narrower than the field a DBC declares. A layout constant
+  explains its byte, so its bits are spoken for before the signal pass runs — in `_build` and
+  again in `apply_bus_order`'s Motorola re-run. Without both, the two stages claimed the same
+  bits on 9 of 133 multiplexed messages, once reading a byte as 16 layout constants *and* as
+  two 4-bit signals. Note that the F1 0.622 → 0.700 lift is a blend and not the boundary
+  detector improving: split on six VW MQB segments, the layout constants score P 1.00 / R 1.00
+  and the rate-based signals stay at F1 0.634.
 - **A better cut rule is not a better field detector.** CAN-D's conditional-flip terms
   (Algorithm 1) raise per-bit boundary recall from 51% to 79% and drop per-bit precision from
   94% to 37%; as extra cut conditions they take whole-field F1 from 0.533 to 0.414. Every
@@ -286,8 +300,11 @@ Say so plainly rather than implying otherwise:
   applied to *signal* detection only (`infer/byteorder.py`). The others are verified arithmetic
   over whole bytes, so bit numbering does not move them; their reported `StartPos` is still
   Intel.
-- **Signals inside a multiplexed layout.** The selector is found and its layouts are drawn, but
-  no detector runs separately within each selector value.
+- **Signals inside a multiplexed layout.** The selector is found, its layouts are drawn, and the
+  whole-byte constant each value selects is read (`infer/layouts.py`), but no *signal* detector
+  runs within a selector value: the moving content is narrow state fields the rate floor cannot
+  see, and per-layout constants are grouped to whole bytes only. Sub-byte layout fields are not
+  recovered.
 - **Variable-length E2E.** Profiles 4 and 7 are claimed only where Length is fixed across the
   trace.
 

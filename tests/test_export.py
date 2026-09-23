@@ -193,6 +193,17 @@ class TestAgainstBoatSchema:
     def test_an_empty_document_validates(self, validator):
         validator.validate(to_pdu_db([]))
 
+    def test_a_multiplexed_message_with_layout_fields_validates(self, validator):
+        """Layout fields share StartPos across values, which the schema allows."""
+        validator.validate(to_pdu_db([
+            message(address=0x6B4, signals=[
+                SignalEntry("Multiplexor", 0, 2, is_muxor=True),
+                SignalEntry("Layout_0", 8, 8, mux_value=0, minimum=65, maximum=65),
+                SignalEntry("Layout_1", 8, 8, mux_value=1, minimum=66, maximum=66),
+                SignalEntry("Layout_2", 8, 8, mux_value=2, minimum=67, maximum=67),
+            ]),
+        ]))
+
 
 class TestMultiplexFields:
     def test_selector_and_group_are_written_only_when_set(self):

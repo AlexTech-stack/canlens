@@ -40,6 +40,7 @@ from .crc16 import (
     find_crc16,
     solve_data_id,
 )
+from .layouts import LayoutField, read_layout_fields
 from .message import (
     MessageInference,
     checksum_candidate_bytes,
@@ -72,6 +73,7 @@ __all__ = [
     "ChecksumHypothesis",
     "CounterHypothesis",
     "Crc16Hypothesis",
+    "LayoutField",
     "MessageInference",
     "MultiplexHypothesis",
     "SignalHypothesis",
@@ -100,6 +102,7 @@ __all__ = [
     "jump_share",
     "motorola_columns",
     "p01_low_id",
+    "read_layout_fields",
     "score_algorithm",
     "score_counter",
     "solve_data_id",

@@ -296,10 +296,43 @@ class TestScore:
         assert result.tallies[FieldKind.COUNTER].hits == 1
         assert result.tallies[FieldKind.CHECKSUM].hits == 1
         assert result.tallies[FieldKind.MULTIPLEXOR].hits == 1
-        # Nothing claimed an ordinary signal, so the reference's are missed.
-        assert result.tallies[FieldKind.SIGNAL] == Tally(missed=2)
+        # Nothing claimed an ordinary signal, and the multiplexed message's
+        # two mux reference fields have no layout fields to match: all three
+        # ordinary reference signals are missed.
+        assert result.tallies[FieldKind.SIGNAL] == Tally(missed=3)
         assert result.overall.hits == 3 and result.overall.false_alarms == 0
         assert result.overall.precision == 1.0
+
+    def test_a_layout_field_matches_the_mux_field_under_its_value(self, reference):
+        from canlens.infer.layouts import LayoutField
+
+        result = score(
+            [
+                inference(
+                    address=1000,
+                    layout_fields=[
+                        LayoutField(8, 8, mux_value=0, value=0x41, frames=50),
+                        LayoutField(8, 8, mux_value=1, value=0x42, frames=50),
+                    ],
+                )
+            ],
+            reference,
+        )
+        signals = result.tallies[FieldKind.SIGNAL]
+        assert signals.hits == 2 and signals.false_alarms == 0 and signals.missed == 0
+
+    def test_a_layout_field_under_the_wrong_value_is_not_a_hit(self, reference):
+        from canlens.infer.layouts import LayoutField
+
+        result = score(
+            [inference(address=1000, layout_fields=[
+                LayoutField(8, 8, mux_value=0, value=0x41, frames=50)])],
+            reference,
+        )
+        signals = result.tallies[FieldKind.SIGNAL]
+        assert signals.hits == 1  # VIN_A is mux 0
+        assert signals.false_alarms == 0
+        assert signals.missed == 1  # VIN_B is mux 1, unclaimed
 
     def test_ordinary_signals_are_scored_now_that_canlens_claims_them(self, reference):
         result = score([inference(address=528)], reference)

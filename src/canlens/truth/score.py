@@ -186,6 +186,10 @@ class Claim:
     text: str
     # False for a signal whose width is a lower bound; see the module docstring.
     exact: bool = True
+    # The selector value a layout field belongs to; None for a static claim.
+    # Two layouts can claim the same bits under different values, so this is
+    # half of the identity a match is judged on.
+    mux_value: int | None = None
 
 
 def claimed_fields(inference: MessageInference) -> dict[FieldKind, list[Claim]]:
@@ -235,6 +239,18 @@ def claimed_fields(inference: MessageInference) -> dict[FieldKind, list[Claim]]:
                 exact=signal.bounded,
             )
         )
+
+    # A multiplexed layout's constants are ordinary reference signals to the
+    # DBC, but they only exist under one selector value, so the value is part
+    # of what a match has to agree on.
+    for layout in inference.layout_fields:
+        out[FieldKind.SIGNAL].append(
+            Claim(
+                layout.bits,
+                f"layout{layout.mux_value}@byte{layout.start_bit // 8}",
+                mux_value=layout.mux_value,
+            )
+        )
     return out
 
 
@@ -244,46 +260,56 @@ def _compare(
     expected: Sequence,
     message: ReferenceMessage,
 ) -> tuple[Tally, list[Disagreement]]:
-    """Match claims to reference signals of one kind, by exact bit set.
+    """Match claims to reference signals of one kind, by bit set and mux value.
 
     Exact equality is the bar deliberately. A counter reported one bit wide of
     the truth is not a hit, and folding it in as one would make the headline
     number meaningless. Overlaps are still counted, as `near`, so that "we are
     looking at the right field and got its extent wrong" stays visible.
-    """
-    wanted = {frozenset(s.bits): s for s in expected}
-    got = {frozenset(c.bits): c.text for c in claims}
-    loose = {frozenset(c.bits) for c in claims if not c.exact}
 
-    hits = sorted(wanted.keys() & got.keys(), key=lambda s: min(s) if s else 0)
-    only_claimed = sorted(got.keys() - wanted.keys(), key=lambda s: min(s) if s else 0)
-    only_expected = sorted(wanted.keys() - got.keys(), key=lambda s: min(s) if s else 0)
+    The selector value joins the bit set in the identity. A multiplexed
+    message puts *different* fields on the same bits under different values,
+    so matching on bits alone would call a layout-0 field a hit for a layout-1
+    reference and vice versa.
+    """
+    wanted = {(frozenset(s.bits), getattr(s, "mux_value", None)): s for s in expected}
+    got = {(frozenset(c.bits), c.mux_value): c.text for c in claims}
+    loose = {frozenset(c.bits) for c in claims if not c.exact and c.mux_value is None}
+
+    def order(key: tuple[frozenset[int], int | None]) -> int:
+        return min(key[0]) if key[0] else 0
+
+    hits = sorted(wanted.keys() & got.keys(), key=order)
+    only_claimed = sorted(got.keys() - wanted.keys(), key=order)
+    only_expected = sorted(wanted.keys() - got.keys(), key=order)
 
     # A lower bound matches a reference field that starts where it does and
-    # runs wider. Pair those off before anything is called a disagreement.
-    matched: list[frozenset[int]] = []
+    # runs wider. Only static claims can be lower bounds.
+    matched: list[tuple[frozenset[int], int | None]] = []
     for claim in only_claimed:
-        if claim not in loose or not claim:
+        bits, mux = claim
+        if mux is not None or bits not in loose or not bits:
             continue
         partner = next(
             (
                 e
                 for e in only_expected
-                if e >= claim and min(e) == min(claim) and e not in matched
+                if e[1] is None and e[0] >= bits and min(e[0]) == min(bits) and e not in matched
             ),
             None,
         )
         if partner is not None:
             matched.append(partner)
             hits.append(claim)
-    only_claimed = [c for c in only_claimed if c not in set(hits)]
+    hit_keys = set(hits)
+    only_claimed = [c for c in only_claimed if c not in hit_keys]
     only_expected = [e for e in only_expected if e not in matched]
 
     disagreements: list[Disagreement] = []
     near = 0
     unpaired = list(only_expected)
     for claim in only_claimed:
-        partner = next((e for e in unpaired if e & claim), None)
+        partner = next((e for e in unpaired if e[0] & claim[0] and e[1] == claim[1]), None)
         if partner is not None:
             unpaired.remove(partner)
             near += 1
@@ -379,9 +405,16 @@ def score(
                 continue
             wanted = expected.of_kind(kind)
             if kind is FieldKind.SIGNAL:
-                moving = [s for s in wanted if _moves(inference, s)]
-                result.still_signals += len(wanted) - len(moving)
-                wanted = moving
+                # A static signal that never moved cannot be found: there is
+                # nothing to see, so counting it as a miss measures the driver.
+                # A multiplexed signal is different -- it may be a layout
+                # constant, which `layout_fields` does claim -- so the mux ones
+                # are scored whether or not their bits moved.
+                static = [s for s in wanted if s.mux_value is None]
+                mux_refs = [s for s in wanted if s.mux_value is not None]
+                moving = [s for s in static if _moves(inference, s)]
+                result.still_signals += len(static) - len(moving)
+                wanted = moving + mux_refs
             tally, disagreements = _compare(kind, claims[kind], wanted, expected)
             result.tallies[kind] = result.tallies[kind] + tally
             result.disagreements.extend(disagreements)

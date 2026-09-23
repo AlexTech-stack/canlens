@@ -27,6 +27,7 @@ from .palette import (
     BACKGROUND,
     CHECKSUM_RGBA,
     COUNTER_RGBA,
+    LAYOUT_RGBA,
     MUX_RGBA,
     NAMED_RGBA,
     SIGNAL_RGBA,
@@ -379,12 +380,16 @@ class LayoutView(pg.PlotWidget):
         self._image = pg.ImageItem(axisOrder="row-major")
         self.addItem(self._image)
         self._overlay: QtWidgets.QGraphicsRectItem | None = None
+        self._field_boxes: list[QtWidgets.QGraphicsRectItem] = []
         self.setVisible(False)
 
     def show_row(self, model: SegmentModel, index: int) -> None:
         if self._overlay is not None:
             self.removeItem(self._overlay)
             self._overlay = None
+        for box in self._field_boxes:
+            self.removeItem(box)
+        self._field_boxes.clear()
         layouts = model.layouts(index)
         if not layouts:
             self.setVisible(False)
@@ -417,6 +422,21 @@ class LayoutView(pg.PlotWidget):
         box.setZValue(5)
         self.addItem(box)
         self._overlay = box
+
+        # The constant a value selects, boxed on that value's own row. Rows
+        # are drawn top-down, so layout i sits at y = count - 1 - i.
+        row_of = {value: count - 1 - i for i, (value, _f, _k) in enumerate(layouts)}
+        if row.inference is not None:
+            for field in row.inference.layout_fields:
+                y = row_of.get(field.mux_value)
+                if y is None:
+                    continue
+                fbox = QtWidgets.QGraphicsRectItem(field.start_bit, y, field.length, 1)
+                fbox.setBrush(pg.mkBrush(*LAYOUT_RGBA))
+                fbox.setPen(pg.mkPen(LAYOUT_RGBA[:3], width=2))
+                fbox.setZValue(6)
+                self.addItem(fbox)
+                self._field_boxes.append(fbox)
 
         shown = min(count, LAYOUT_MAX_ROWS)
         axis = self.getPlotItem().getAxis("bottom").height() or AXIS_FALLBACK_PX
@@ -554,6 +574,7 @@ class DetailPanel(QtWidgets.QWidget):
             lines += [f"crc16     {c}" for c in row.inference.crc16s]
             if row.inference.multiplexor is not None:
                 lines.append(f"mux       {row.inference.multiplexor}")
+            lines += [f"layout    {f}" for f in row.inference.layout_fields]
             lines += [f"signal    {s}" for s in row.inference.signals]
         self.findings.setPlainText("\n".join(lines) or "no counter or checksum reproduced this message")
 

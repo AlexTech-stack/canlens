@@ -1090,6 +1090,83 @@ slice cycles with it — seven "2-bit counters" on that one message before the
 detector existed. A counter that merely has its lowest bit locked to a
 two-frame schedule is kept.
 
+### What each selector value selects
+
+Finding the selector is half the job; the other half is reading out *what it
+selects*. `0x6B4` sends seven bytes under each of its three values — the VIN
+and a secret — and the trace should be able to say which value carries which.
+canlens now reports the **whole-byte constants a value picks out**:
+
+```
+  mux      2 bits @ bit 0, 3 values, 34 bits depend on it
+           value   0: 150 frames
+           value   1: 75 frames
+           value   2: 75 frames
+           layout   0: b1=238, b2=99, b3=115, b4=6, b5=87, b6=86, b7=87
+           layout   1: b1=86, b2=70, b3=55, b4=65, b5=85, b6=50, b7=74
+           layout   2: b1=87, b2=49, b3=55, b4=55, b5=51, b6=56, b7=54
+```
+
+Value 1 reads `VF7AU2J` and value 2 `W177386`: the table is recovered. On
+export each becomes a signal with `MuxValue` set, which is exactly the shape
+BoAt's PDU database expects.
+
+**It is not signal detection, and that was measured first.** Running the
+ordinary signal detector inside each value recovers almost nothing real. The
+VIN is a table of constants that never move, and the genuinely moving fields
+opendbc declares in a multiplexed message — Tesla `0x221`'s two-bit state
+signals — are narrow slow fields, the one shape the rate floor cannot see.
+Over 24 segments and 8 platforms, 51 multiplexed messages produced 33 putative
+layout signals, and the one message with a DBC to check them against recovered
+none of its 13 declared moving fields.
+
+**The grouping rule was chosen by scoring three.** The hard part is not reading
+values but deciding where a constant field ends, which a trace cannot see for
+the same reason it cannot see a signal's far end. Matching exact bit set and
+selector value against the mux fields the DBCs declare, over the VIN on five MQB
+platforms and the Tesla state message:
+
+| grouping rule | hit | extra | F1 |
+|---|---|---|---|
+| maximal runs of dependent bits | 0 | 540 | 0.00 |
+| **whole byte** | **315** | **8** | **0.95** |
+| byte if a single run, else runs | 96 | 495 | 0.21 |
+
+A run of dependent bits is *narrower* than the field a DBC declares — a bit that
+happened not to differ between the values in this trace is not dependent — so
+runs never line up and the first rule misses every one. A whole byte is fully
+observed, so reporting it claims no more than the constant that is there. All 27
+reference fields the winner missed are sub-byte fields in the one Tesla message,
+which no rule recovered: a two-bit field inside a byte that also carries other
+content is invisible to a trace, and that is stated rather than papered over.
+
+Scored over 25 segments (eight MQB platforms and a Tesla), recovering the layout
+constants takes the signal tally from **P 0.797 / R 0.509 / F1 0.622** to
+**P 0.847 / R 0.596 / F1 0.700** — 504 more correct fields and ten more extras.
+
+Read that as two detectors pooled, not as the boundary detector improving.
+Split on six VW MQB segments:
+
+| claims scored | hits | extras | misses | P | R | F1 |
+|---|---|---|---|---|---|---|
+| rate-based signals | 296 | 83 | 259 | 0.781 | 0.533 | 0.634 |
+| layout constants | 126 | 0 | 0 | 1.000 | 1.000 | **1.000** |
+| combined | 422 | 83 | 259 | 0.836 | 0.620 | 0.712 |
+
+A layout constant is a whole byte, fully observed, with nothing to infer about
+its extent — so it is a perfectly solved sub-problem, and it is 22% of all
+signal-kind claims across 60 segments. Segmentation did not get better; an
+easier question joined the same tally.
+
+**A layout constant spends its byte.** Its bits are spoken for before the
+signal pass runs, in `_build` and again in `apply_bus_order`'s Motorola re-run.
+Without both, the two stages claimed the same bits on 9 of 133 multiplexed
+messages over 60 segments — at worst a byte read as 16 layout constants *and*
+as two 4-bit signals, which cannot both be true. The byte-order *decision* is
+deliberately left out of this: it counts long fields over the verified
+detectors alone, and adding layout bits there moved the verdict on 2 of 176
+buses, which is a calibrated threshold and not a collision fix's business.
+
 **Checksums** are only reported when a named algorithm *reproduces* the byte.
 The library is `sum8`, `sum8_complement`, `xor8`, `sum8_addr`,
 `sum8_addr_len`, Honda's
@@ -1994,7 +2071,7 @@ even though development happens on 3.14.
 | `corpus/` | working — manifest, selective fetch, local accounting |
 | `decode/` | working — `rlog.zst` → `CanFrame` |
 | `analyze/` | working — timing, entropy, per-bit classification |
-| `infer/` | counters, 8-bit checksums, 16-bit CRCs, the E2E profiles, multiplexors and rate-based signal boundaries (with the value-jumpiness precision filter) working; no splitting of merged fields, no signals inside a multiplexed layout |
+| `infer/` | counters, 8-bit checksums, 16-bit CRCs, the E2E profiles, multiplexors, per-value layout constants and rate-based signal boundaries (with the value-jumpiness precision filter) working; no splitting of merged fields, no signals *inside* a multiplexed layout |
 | `corroborate/` | cross-segment agreement with device-weighted evidence — **working**; cross-platform and bus alignment to do |
 | `truth/` | opendbc DBCs as a reference, precision and recall against them — **working**; no automatic platform-to-DBC mapping |
 

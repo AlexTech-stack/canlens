@@ -83,7 +83,7 @@ It is gitignored and **must stay that way**. The upstream bucket is about 299 GB
 ./.venv/bin/ruff check . && ./.venv/bin/mypy src && ./.venv/bin/pytest -q
 ```
 
-869 tests, about 17 seconds. **No corpus data is required** — the suite runs on synthetic
+886 tests, about 17 seconds. **No corpus data is required** — the suite runs on synthetic
 payloads with known ground truth.
 
 ### 2.5 The pipe trap — read this, it has bitten this project three times
@@ -157,6 +157,7 @@ fetching data never drags in a compiler toolchain. Do not add a third-party impo
 | Change a 16-bit CRC or E2E Profile 5 | `infer/crc16.py` |
 | Change E2E Profile 22, 6, 4 or 7 | `infer/profiles.py` (+ `infer/crcwide.py` for CRC-32/64) |
 | Change multiplexor detection | `infer/multiplex.py` |
+| Change what a selector value selects | `infer/layouts.py` |
 | Change signal boundary detection | `infer/signals.py` |
 | Change the signal precision filter | `infer/smoothness.py` |
 | Change bit classification thresholds | `analyze/bits.py` |
@@ -210,7 +211,8 @@ Thresholds: counters **0.95**, everything else **0.99**.
 4. E2E Profile 1 / 11
 5. Width-gated E2E Profiles 22, 6, 4, 7
 6. CRC-16 (3 variants) and E2E Profile 5
-7. Multiplexor
+7. Multiplexor, then the whole-byte constants each selector value picks
+   (`infer/layouts.py`)
 8. Two counter cleanups (`outside_checksums`, `outside_multiplex`)
 9. Signals, over bits nothing above explained, then the value-jumpiness
    precision filter (`infer/smoothness.py`)
@@ -269,7 +271,7 @@ which actually uses a byte sum.
 
 ### 5.1 SPDX header on every new source file
 
-Two lines, after any shebang, matching the surrounding files. All 48 source files and all 33
+Two lines, after any shebang, matching the surrounding files. All 49 source files and all 34
 test files carry it; do not create one without it.
 
 ```python
@@ -466,6 +468,20 @@ either side is wrong.
   both *lower* F1. It is a filter, not a segmenter; it cannot split a merged field, and a
   carry-based split of one was measured and rejected because real signals are signed and
   offset around a midpoint, not natural-binary. See `infer/smoothness.py`.
+- **A multiplexor's value selects constants, not wide signals.** The flagship VIN message is a
+  table of whole bytes constant under each selector value, and the moving mux fields a DBC
+  declares are narrow (2-bit) state enums, which the rate floor cannot see. So the reader
+  reports the whole-byte constant per value (`infer/layouts.py`), not per-layout signals;
+  scored against opendbc it recovers the VIN exactly (P 0.98, all 27 misses sub-byte Tesla
+  fields no rule got) and lifts the signal tally over 25 segments from F1 0.622 to 0.700.
+  Whole-byte grouping was chosen by scoring three rules; the others recovered nothing because
+  a run of *dependent* bits is narrower than the field a DBC declares. A layout constant
+  explains its byte, so its bits are spoken for before the signal pass runs — in `_build` and
+  again in `apply_bus_order`'s Motorola re-run. Without both, the two stages claimed the same
+  bits on 9 of 133 multiplexed messages, once reading a byte as 16 layout constants *and* as
+  two 4-bit signals. Note that the F1 0.622 → 0.700 lift is a blend and not the boundary
+  detector improving: split on six VW MQB segments, the layout constants score P 1.00 / R 1.00
+  and the rate-based signals stay at F1 0.634.
 - **A better cut rule is not a better field detector.** CAN-D's conditional-flip terms
   (Algorithm 1) raise per-bit boundary recall from 51% to 79% and drop per-bit precision from
   94% to 37%; as extra cut conditions they take whole-field F1 from 0.533 to 0.414. Every
@@ -491,8 +507,11 @@ either side is wrong.
 ## 9. Not implemented — say so plainly
 
 - **Scaling and units.** No factor, offset or unit is ever inferred.
-- **Signals inside a multiplexed layout.** The selector is found and its per-value layouts are
-  drawn, but no detector runs separately within each selector value.
+- **Signals inside a multiplexed layout.** The selector is found, its per-value layouts are
+  drawn, and the whole-byte constant each value selects is read (`infer/layouts.py`), but no
+  *signal* detector runs within a selector value: the moving content is narrow state fields,
+  which the rate floor cannot see, and per-layout constants are grouped to whole bytes only.
+  Sub-byte layout fields are not recovered.
 - **Motorola for counters, checksums and multiplexors.** The bus's bit order is decided and
   applied to *signal* detection only. Counters, checksums and multiplexors are verified
   arithmetic over whole bytes, so bit numbering does not move them and their reported
