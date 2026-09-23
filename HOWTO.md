@@ -765,9 +765,35 @@ under Motorola, as a DBC `StartPos` does. Read positions from
 field is not contiguous in Intel numbering. `truth` and the PDU exporter both
 go through that property, and the exporter sets `ByteOrder` accordingly.
 
-Counters, checksums and multiplexors are left in Intel order deliberately.
-They are verified arithmetic over whole bytes, so bit numbering does not move
-them.
+Counters, checksums and multiplexors are left in Intel order deliberately,
+and the reason is worth spelling out because it explains something that looks
+wrong at first: how a Rivian's 169 counters and 159 checksums were all read
+correctly while the bus was being interpreted in the wrong bit order.
+
+Checksums and CRCs never touch bit numbering at all — they consume whole
+bytes and report a `byte_index`, and a byte matrix is the same array whichever
+way its bits are later unpacked.
+
+Counters do read the bit matrix, so they could have been wrong. They were not,
+because **a field inside one byte reads as the same integer under either
+convention** — not merely the same bits. A little-endian field runs LSB-first
+from its start; a big-endian field runs MSB-first from its start; inside one
+byte those coincide exactly, on all 36 single-byte layouts. And every one of
+the Rivian's counters is inside one byte: 159 of them four bits wide, which is
+the AUTOSAR E2E alive counter, plus ten of two bits. The Prius' 59 are all a
+byte each. That is not luck — E2E puts the counter in a nibble and the CRC in
+a byte precisely so their position is unambiguous.
+
+So the only fields that were ever mis-read on a big-endian bus are signals:
+the only ones wide enough to cross a byte boundary, and the only ones whose
+extent is inferred rather than verified.
+
+The residual exposure is a counter that *does* cross a byte boundary on a bus
+decided Motorola. Over a nine-platform sample with 13 Motorola buses carrying
+598 counters, there are **two**, both on a Chevrolet Bolt. Even those are not
+phantoms: a counter is only reported once it reproduces the observed sequence
+at 95% or better, so what is at stake is the convention its `StartPos` is
+quoted in, not whether a counter is there.
 
 One correction this measurement forced. The correlation between a DBC's
 big-endian share and canlens' score on it is real — the Prius and Rivian score

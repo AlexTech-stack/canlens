@@ -255,6 +255,14 @@ than the function under test. Prefer synthetic payloads with known ground truth 
   penalty; used as a standalone rule it only adds cuts. Measured with and without constant-bit
   removal. The existing rate-ratio rule scores 0.660 on the per-bit metric, so the cut rule is
   not the weak part.
+- **A field inside one byte reads as the same integer in either bit order.** Not just the same
+  bits: a little-endian field runs LSB-first from its start and a big-endian one MSB-first from
+  its start, and inside one byte those coincide (all 36 single-byte layouts). This is why a
+  Rivian's 169 counters and 159 checksums were all correct while the bus was being read in the
+  wrong order — every counter there is a 4-bit E2E alive counter inside one byte, and checksums
+  consume whole bytes and never touch bit numbering. Only signals were ever wrong, being the
+  only fields wide enough to cross a byte. Residual exposure: a counter spanning a byte on a
+  Motorola bus, which is 2 of 598 over a nine-platform sample.
 - **6 physical cores, 12 logical.** `default_jobs()` returns physical cores on purpose; the
   second thread of a core adds nothing to numpy-bound work.
 
