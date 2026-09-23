@@ -94,6 +94,13 @@ the same evidence, and nothing in a trace separates them.
 Scored against opendbc over eight platforms with the real scorer, counting a
 claim right when it gets the start bit and either the exact width or a narrower
 one whose omitted bits never moved: 50% precision, 54% recall.
+
+Those are the *raw* rate-based claims. `find_signals_in` passes them through
+the value-jumpiness filter in :mod:`canlens.infer.smoothness`, which drops a
+claim whose value lurches across its observed range on too many frames. On the
+eleven platform and DBC pairs that filter was measured on it raises precision
+from 59% to 71% for four points of recall (F1 0.604 -> 0.643), and over 38
+corpus segments it removes 29% of all signal claims.
 """
 from __future__ import annotations
 

@@ -481,7 +481,9 @@ claims have the exact width 89% of the time, and unbounded ones are right as a
 lower bound 89% of the time.
 
 Scored against opendbc over nine platform and DBC pairs: **51% precision, 50%
-recall**, on 313 hits against 312 missed and 303 extra. The scorer skips
+recall**, on 313 hits against 312 missed and 303 extra. Those are the *raw*
+rate-based claims; the value-jumpiness filter further down runs after them and
+lifts precision to 71% at 58% recall on a different eleven-pair set. The scorer skips
 reference signals whose bits never moved, on the same reasoning it already
 skips messages the drive never carried — of 4566 signals the DBCs name on
 recorded messages, 4307 sat completely still, and counting those as misses
@@ -557,6 +559,58 @@ evidence of anything. Longer traces push that out; they do not remove it.
 **A narrow field that sits still is invisible.** Of the claims two or three
 bits wide, 5% match a reference signal. Unlike the other two this is not a
 threshold that could be loosened; the section above measures why.
+
+### Value jumpiness — the cut that raises precision
+
+Every statistic above reads *how often a bit flips*. None reads *how far a
+field's value moves between frames*, and that is a different question. A
+counter's bits can flip as fast as a wheel speed's, so transition rate cannot
+always tell a real signal from a region that is really two fields run together.
+Value jumpiness can, and it is scale-free:
+
+```
+jump share = share of frames where |Δ value| > 10% of the field's observed range
+```
+
+A coherent quantity moves in small steps, so few of its frames are jumps. A
+region straddling two independent fields, or a fragment of noise, lurches across
+its range often. A claim whose jump share exceeds **0.20** is dropped.
+
+**It was tested as a filter before it was built as one.** Over eleven platform
+and DBC pairs (ten MQB platforms against `vw_mqb.dbc`, plus a Tesla Model 3),
+three segments each, aggregated:
+
+| filter | precision | recall | F1 |
+|---|---|---|---|
+| none | 59% | 62% | 0.604 |
+| length ≥ 4 (control) | 61% | 53% | 0.563 |
+| low-bit rate ≤ 0.2 (control) | 67% | 44% | 0.528 |
+| **value jump ≤ 0.20** | **71%** | **58%** | **0.643** |
+
+The two controls are the point. A length floor raises precision from 59% to 61%
+only by giving up recall, and *lowers* F1 at every threshold tried; a transition
+rate floor does the same more sharply. Value jumpiness is not length or rate in
+disguise: it trades four points of recall for twelve of precision, and drops
+roughly six times more false claims than true ones — 1057 extras against 175
+hits on the sweep. Those 59/62 baseline figures sit above the 51/50 the raw
+detector scores, partly because this set is mostly MQB and partly because the
+scorer already applies the bus's own bit order.
+
+The constants are not knife-edge. A 2D sweep of the jump size (0.05, 0.10, 0.20)
+against the share allowed (0.10 … 0.50) leaves F1 on a plateau of 0.637 to 0.645
+for every share at or below 0.30; the chosen corner sits mid-plateau. Across 38
+corpus segments it removes **29% of all signal claims** — 11,225 become 7,943.
+
+**What it does not do.** It is a filter, not a segmenter: it drops whole claims,
+it does not split a region that is two fields, and it cannot recover a field the
+rate floor lost. A splitter was measured and rejected — the best interior cut of
+a false claim improved smoothness by more than 0.2 on only 12% of them, too weak
+to cut on. A carry-based boundary test was measured and rejected too: in a
+counter, a rising bit means the bits below it wrapped, but real signals are
+signed and offset around a midpoint rather than natural-binary, so the signal
+that survives in synthetic ramps is destroyed on the wire. Both are recorded in
+`infer/smoothness.py`, and the known limits above are untouched — this ranks and
+drops claims, it does not extend what `find_signals` can see.
 
 ### More drives, more range
 
@@ -735,17 +789,18 @@ Every bus of a Rivian reads Motorola, every bus of a Golf reads Intel, and a
 Prius bus carrying eight messages and no long field is reported undecided
 instead of guessed — which is the behaviour the margin exists to produce.
 
-Scored on those buses, detecting in the decided order rather than always Intel
-takes a Rivian from 2% precision and 3% recall to **14% and 18%**, and a Prius
-from nothing at all to **13% and 23%**. Volkswagen platforms get *worse* under
-Motorola, as they must, and that is the control that says this measures the
-bus rather than flattering the detector.
+Scored on one segment each with the value-jumpiness filter in place, detecting
+in the decided order rather than always Intel takes a Rivian from 21% precision
+and 19% recall to **43% and 35%**, and a Prius from 12% and 18% to **42% and
+59%**. Volkswagen platforms get *worse* under Motorola, as they must, and that
+is the control that says this measures the bus rather than flattering the
+detector.
 
 **And it is applied.** `infer` decides the order per bus and re-reads signals
 on the buses that are not Intel, in two passes: the first finds counters,
 checksums and multiplexors, which must be excluded before long fields are
 counted, and only the signal pass is redone afterwards. Scored over the nine
-platform and DBC pairs:
+platform and DBC pairs *before the value-jumpiness filter existed*:
 
 | platform | always Intel | bus order applied |
 |---|---|---|
@@ -754,9 +809,15 @@ platform and DBC pairs:
 | every Intel platform | unchanged | unchanged |
 | **overall** | 51% / 50%, F1 0.504 | **54% / 52%, F1 0.533** |
 
-The six Volkswagen platforms and the Tesla come out byte for byte identical,
-which is the property that matters: a bus the traffic reads as Intel is left
-exactly as it was.
+Those numbers are the bus-order step's effect and are kept as such. They are no
+longer the pipeline's scores: the value-jumpiness filter runs on every bus,
+Intel included, so "every Intel platform unchanged" is true of the *order* step
+alone. Re-measured with the filter on one segment each, a Rivian's signals move
+21%/19% → 43%/35% and a Prius' 12%/18% → 42%/59%.
+
+The six Volkswagen platforms and the Tesla come out byte for byte identical
+under the order step, which is the property that matters: a bus the traffic
+reads as Intel is left exactly as it was by deciding the order.
 
 A claim now carries its own `byte_order`, and `start_bit` means different
 things under each — the lowest bit under Intel, the *most* significant bit
@@ -1933,7 +1994,7 @@ even though development happens on 3.14.
 | `corpus/` | working — manifest, selective fetch, local accounting |
 | `decode/` | working — `rlog.zst` → `CanFrame` |
 | `analyze/` | working — timing, entropy, per-bit classification |
-| `infer/` | counters, 8-bit checksums, 16-bit CRCs, the E2E profiles and multiplexors working; signal boundaries still to do |
+| `infer/` | counters, 8-bit checksums, 16-bit CRCs, the E2E profiles, multiplexors and rate-based signal boundaries (with the value-jumpiness precision filter) working; no splitting of merged fields, no signals inside a multiplexed layout |
 | `corroborate/` | cross-segment agreement with device-weighted evidence — **working**; cross-platform and bus alignment to do |
 | `truth/` | opendbc DBCs as a reference, precision and recall against them — **working**; no automatic platform-to-DBC mapping |
 

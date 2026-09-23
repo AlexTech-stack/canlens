@@ -53,7 +53,7 @@ Run all three before claiming anything is done:
 ./.venv/bin/ruff check . && ./.venv/bin/mypy src && ./.venv/bin/pytest -q
 ```
 
-797 tests, about 16 seconds, no corpus data required — the suite runs on synthetic payloads
+869 tests, about 17 seconds, no corpus data required — the suite runs on synthetic payloads
 with known ground truth.
 
 **Never pipe a gate command into `tail`/`head` without checking `PIPESTATUS`.** Doing so masked
@@ -111,8 +111,10 @@ Counters need 0.95, everything else 0.99.
 
 **3. Detector order in `_build()` is load-bearing.** `infer/message.py` runs candidate bytes →
 counters → plain checksums → Honda's nibble → E2E 1/11 → width-gated E2E 22/6/4/7 → CRC-16
-and E2E 5 → multiplexor → two counter cleanups → signals over whatever is left. Each stage receives only the byte positions nothing simpler
-has explained. Reordering changes results; a plain sum would get reported as an exotic CRC.
+  and E2E 5 → multiplexor → two counter cleanups → signals over whatever is left, then the
+  value-jumpiness precision filter (`infer/smoothness.py`). Each stage receives only the byte
+  positions nothing simpler has explained. Reordering changes results; a plain sum would get
+  reported as an exotic CRC.
 
 **4. Echoes are not data.** `CanData.src >= 128` marks a frame the device itself put on the
 wire, on bus `src - 128`. They are 30–46% of a segment and reproduce the source bus's address
@@ -141,7 +143,7 @@ platforms and Profile 6 from 139.
 ## Conventions
 
 **SPDX header on every new source file**, after any shebang, matching the surrounding files.
-All 45 source files and all 30 test files carry it.
+All 48 source files and all 33 test files carry it.
 
 ```python
 # Copyright 2026 Alexander Günther
@@ -240,13 +242,22 @@ than the function under test. Prefer synthetic payloads with known ground truth 
   (F1 0.489 against 0.504), because a bit admitted by a statistic that cannot segment it has
   nowhere to be cut. BinaryInferno's byte-value form fails separately: it can only cut on byte
   edges, and 4126 of 4539 reference signals are not byte-aligned.
-- **Agreement across platforms is the strongest precision signal found so far.** Over 17 MQB
+- **Agreement across platforms is the strongest *ranking* signal found so far.** Over 17 MQB
   platforms, a start bit proposed by one platform is right 20% of the time and one proposed by
   all of them 85% of the time, rising monotonically in between. Filtering to the established
-  tier takes signal precision from 53% to 73%; no single-platform threshold sweep reached past
-  the low fifties. It cannot invent a boundary, so recall is capped by `find_signals`. Widths
-  are reported as `at least n bits` from the group's widest claim, which is still short 67% of
-  the time and overshoots 13%. See `corroborate/boundaries.py`.
+  tier takes signal precision from 53% to 73%; no single-platform *boundary* threshold sweep
+  reached past the low fifties. It cannot invent a boundary, so recall is capped by
+  `find_signals`. Widths are reported as `at least n bits` from the group's widest claim, which
+  is still short 67% of the time and overshoots 13%. See `corroborate/boundaries.py`.
+- **How far a value moves is a precision signal that rate, length and entropy all miss.**
+  A field whose value lurches across more than 10% of its observed range on more than 20% of
+  frames is not one coherent signal. Dropping such claims (`infer/smoothness.py`) trades four
+  points of recall for twelve of precision over eleven platform/DBC pairs (P 0.593 -> 0.714,
+  F1 0.604 -> 0.643), and removes 29% of all signal claims across 38 corpus segments — six
+  times more false than true. Controls rule out the confound: a length floor and a rate floor
+  both *lower* F1. It is a filter, not a segmenter; it cannot split a merged field, and a
+  carry-based split of one was measured and rejected because real signals are signed and
+  offset around a midpoint, not natural-binary. See `infer/smoothness.py`.
 - **A better cut rule is not a better field detector.** CAN-D's conditional-flip terms
   (Algorithm 1) raise per-bit boundary recall from 51% to 79% and drop per-bit precision from
   94% to 37%; as extra cut conditions they take whole-field F1 from 0.533 to 0.414. Every

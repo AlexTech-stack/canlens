@@ -442,7 +442,7 @@ def cmd_truth_dbc(args) -> int:
     reference = load_dbc(args.dbc)
     print(reference.summary())
     named = sum(len(m.of_kind(FieldKind.SIGNAL)) for m in reference.messages.values())
-    print(f"{named} ordinary signals (not scored -- canlens does not infer boundaries)")
+    print(f"{named} ordinary signals (only those whose bits moved are scored)")
     if not args.verbose:
         return 0
     print(f"\n{'message':<28}{'id':>7}  fields")

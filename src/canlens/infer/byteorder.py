@@ -32,11 +32,12 @@ test. The one it gets wrong is also the least decided, at a 6% margin where
 the narrowest correct answer sits at 12%, which is what `MIN_MARGIN` exists
 to catch.
 
-Scored on those buses, running detection in the decided order rather than
-always Intel takes a Rivian from 2% precision and 3% recall to 14% and 18%,
-and a Prius from nothing at all to 13% and 23%. Volkswagen platforms get
-worse under Motorola, as they should, and that is the check that this is
-measuring the bus rather than flattering the detector.
+Scored on one segment each with the value-jumpiness filter in place (see
+:mod:`canlens.infer.smoothness`), deciding the order rather than assuming Intel
+takes a Rivian's signal precision from 21% to 43% (recall 19% -> 35%) and a
+Prius' from 12% to 42% (recall 18% -> 59%). Volkswagen platforms get worse
+under Motorola, as they should, and that is the check that this is measuring
+the bus rather than flattering the detector.
 """
 from __future__ import annotations
 
@@ -46,6 +47,7 @@ import numpy as np
 
 from ..analyze.bits import BitOrder, bit_matrix_from_bytes
 from .signals import SignalHypothesis, find_signals
+from .smoothness import filter_signals
 
 # A field this wide cannot fit inside one byte, so it can only be read as one
 # run in the order that is correct. Nine rather than eight because an 8-bit
@@ -176,21 +178,31 @@ def find_signals_in(
     they stay where they were found; `claimed_bits` arrives in Intel indices
     either way and is mapped across for the Motorola pass.
 
+    Both orders then drop claims whose value lurches across its range too
+    often to be a single signal -- the value-jumpiness filter in
+    :mod:`canlens.infer.smoothness`. It runs inside this function rather than
+    in `find_signals` so that the byte-order decision, which counts long
+    fields with `find_signals` directly, is left exactly as it was.
+
     A Motorola claim comes back labelled as a DBC big-endian field: its
     `start_bit` is the *most* significant bit, which is the run's top column
     mapped back, so `SignalHypothesis.bits` reproduces the wrapped positions.
     """
     if order is BitOrder.INTEL:
-        return find_signals(
-            bit_matrix_from_bytes(byte_matrix, BitOrder.INTEL),
-            claimed_bits=claimed_bits,
-            **options,  # type: ignore[arg-type]
+        matrix = bit_matrix_from_bytes(byte_matrix, BitOrder.INTEL)
+        return filter_signals(
+            matrix,
+            find_signals(matrix, claimed_bits=claimed_bits, **options),  # type: ignore[arg-type]
         )
     width_bits = byte_matrix.shape[1] * 8
-    found = find_signals(
-        motorola_columns(byte_matrix),
-        claimed_bits={intel_to_column(b, width_bits) for b in claimed_bits},
-        **options,  # type: ignore[arg-type]
+    matrix = motorola_columns(byte_matrix)
+    found = filter_signals(
+        matrix,
+        find_signals(
+            matrix,
+            claimed_bits={intel_to_column(b, width_bits) for b in claimed_bits},
+            **options,  # type: ignore[arg-type]
+        ),
     )
     return [
         replace(

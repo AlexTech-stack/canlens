@@ -52,12 +52,21 @@ from .message import (
 from .multiplex import MultiplexHypothesis, find_multiplexor
 from .results import INFER_VERSION, clear_results, infer_cached, warm_segment
 from .signals import SignalHypothesis, find_signals
+from .smoothness import (
+    JUMP_FRACTION,
+    MAX_JUMP_SHARE,
+    filter_signals,
+    jump_share,
+    v_jump_share,
+)
 
 __all__ = [
     "ALGORITHMS",
     "CRC16_ALGORITHMS",
     "INFER_VERSION",
+    "JUMP_FRACTION",
     "LONG_FIELD",
+    "MAX_JUMP_SHARE",
     "MIN_MARGIN",
     "BusOrder",
     "ChecksumHypothesis",
@@ -73,6 +82,7 @@ __all__ = [
     "e2e_crc8",
     "e2e_p05",
     "field_values",
+    "filter_signals",
     "find_checksums",
     "find_counters",
     "find_crc16",
@@ -87,10 +97,12 @@ __all__ = [
     "infer_message",
     "infer_message_columnar",
     "infer_segment",
+    "jump_share",
     "motorola_columns",
     "p01_low_id",
     "score_algorithm",
     "score_counter",
     "solve_data_id",
+    "v_jump_share",
     "warm_segment",
 ]
