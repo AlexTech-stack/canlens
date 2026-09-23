@@ -262,7 +262,13 @@ Say so plainly rather than implying otherwise:
 - **Scaling and units.** No factor, offset or unit is ever inferred.
 - **Signals inside a multiplexed layout.** The selector is found and its layouts are drawn, but
   no detector runs separately within each selector value.
-- **Motorola search.** Bit order is a parameter, not something searched.
+- **Motorola search.** Bit order is a parameter, not something searched — measured, then left
+  that way. Byte order is *unobservable* for a field inside one byte (all 224 single-byte
+  layouts have an identical little-endian twin), and single-byte fields are 83-91% of every
+  reference DBC; `truth/score.py` compares bit sets, so those already match either way. Only
+  byte-wrapping fields are affected: 0% of Volkswagen's scorable signals, 8% of Tesla's, 30%
+  of Rivian's, 41% of the Prius'. A second pass in reversed-Motorola order finds 10 of them
+  and invents 78, including 20 per Volkswagen platform where there is nothing to find.
 - **Variable-length E2E.** Profiles 4 and 7 are claimed only where Length is fixed across the
   trace.
 

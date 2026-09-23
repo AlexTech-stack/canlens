@@ -650,6 +650,78 @@ Worth recording alongside: on that per-bit metric the existing rate-ratio rule
 scores 0.660, which is not a weak boundary detector. The difficulty canlens
 reports is almost entirely the whole-field requirement, not the cut rule.
 
+### The Motorola search, measured and not shipped
+
+Bit order is a parameter here and has never been searched. Since Rivian's DBC
+is 97% big-endian and the Prius' is 100%, against 0% for Volkswagen MQB, that
+looked like the largest untouched gap in signal detection. Measured, it is
+mostly not a gap at all.
+
+**The mechanism works.** Unpacking MSB-first and then reversing the whole
+vector end to end puts every big-endian signal in a contiguous run whose rate
+decays upward, exactly like an Intel-order field — verified on all 344
+synthetic big-endian layouts that fit in eight bytes, with the DBC `StartPos`
+recoverable from the run's top column in every case. The naive version of this
+is wrong in a way that is easy to miss: in plain MSB-first order a big-endian
+field runs from its *most* significant bit, so the rate climbs along the field
+instead of decaying and the cut rule fires inside fields. The end-to-end
+reversal is what fixes that.
+
+**But byte order is not observable for most signals.** A field inside a single
+byte has the same bits under either convention — bits 3 to 6 of a byte are a
+little-endian field with `StartPos` 3 and, identically, a big-endian field
+with `StartPos` 6. All 224 single-byte layouts have an exact little-endian
+twin. And single-byte fields are the overwhelming majority:
+
+| DBC | signals | single-byte |
+|---|---|---|
+| vw_mqb | 1278 | 91% |
+| tesla_model3_party | 200 | 87% |
+| rivian_primary_actuator | 312 | 83% |
+| toyota_prius_2010_pt | 66 | 65% |
+
+Because `truth/score.py` compares by exact **bit set** rather than by start
+position, those already match whatever the DBC calls them. The order question
+only bites for fields that wrap a byte boundary, where the Intel index set is
+non-contiguous and canlens cannot express it at all.
+
+**So the real gap is small and bounded.** Counting only reference signals that
+actually move, and therefore could be found:
+
+| platform | scorable signals | wrapping | ceiling |
+|---|---|---|---|
+| VW Golf MK7 | 133 | 0 | 0% |
+| Škoda Octavia | 113 | 0 | 0% |
+| Tesla Model 3 | 50 | 4 | 8% |
+| Rivian R1 | 37 | 11 | 30% |
+| Toyota Prius | 29 | 12 | 41% |
+
+**Picking the order from the trace does not work.** Within a byte the two
+orders give the same adjacencies, so only the byte *seams* differ — which is
+exactly CAN-D's Definition 2. Whole-message objectives (bits covered, mean
+field length, monotone-decay share) reach 75% at best and are biased rather
+than discriminative. A seam-focused objective gets little-endian messages
+right 97% of the time and big-endian ones 38%, which is worse than a coin.
+
+**And a second pass costs more than it gains.** Running the detector in
+reversed-Motorola order and keeping only the wrapping claims, which is the
+part Intel cannot express, yields **10 right against 78 wrong** across five
+platforms — including 20 wrong on each Volkswagen platform, where there is
+nothing to find. No width gate rescues it: requiring 12 bits or more leaves 7
+right against 29 wrong, and requiring 16 leaves none right at all.
+
+So Motorola stays unsearched, now for a measured reason rather than an
+unexamined one. The mechanism above is the recipe if the underlying detector
+ever gets precise enough to afford the second pass.
+
+One correction this measurement forced. The correlation between a DBC's
+big-endian share and canlens' score on it is real — the Prius and Rivian score
+18% precision where Volkswagen platforms score 49–57% — but endianness is not
+what causes it. Most of their signals are single-byte and already order-
+agnostic. What those platforms actually have is very few signals that move at
+all: 29 and 37 scorable against 133 on a Golf. The scores are low, and noisy,
+for want of data rather than for want of a bit order.
+
 ### Boundaries several platforms agree on
 
 Volkswagen's MQB platform puts address 0x120 on a Golf, a Tiguan, an Audi Q3
