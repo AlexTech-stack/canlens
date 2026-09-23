@@ -592,6 +592,64 @@ at 9, 10, 12 or 13 bits.
 The prior is real. It is just not a prior about the signals a trace can show
 you.
 
+### CAN-D's conditional-flip terms, tested and rejected
+
+CAN-D's unsupervised boundary heuristic (its Algorithm 1) cuts when either
+
+```
+P(F(i+1) | F(i)) < a1        or        P(F(i+2) | F(i+1)) - P(F(i+1) | F(i)) > a2
+```
+
+where `F(i)` is the event that bit `i` flips between consecutive frames. These
+are *conditional* flip probabilities rather than the raw rate ratio canlens
+uses, and the second term is a two-bit lookahead: at a boundary the pair
+`(i, i+1)` straddles two independent fields and scores low, while the pair
+above it sits inside one field and scores around a half, so the difference
+climbs. It is a genuinely different idea and it was worth trying.
+
+Added as extra cut conditions alongside the rate ratio and scored over six
+Volkswagen-group platforms, whose DBC is entirely little-endian so an
+Intel-order detector can be judged fairly:
+
+| cut rule | precision | recall | F1 |
+|---|---|---|---|
+| rate ratio only | **55%** | **52%** | **0.533** |
+| + term 1 (a1 = 0.20) | 48% | 49% | 0.487 |
+| + term 2 (a2 = 0.30) | 38% | 46% | 0.416 |
+| + both | 38% | 46% | 0.414 |
+
+Every variant is worse on both axes, and the same holds after removing
+constant bits first, which is how CAN-D builds its features — the rate-ratio
+baseline reproduces to three figures on the condensed vector, so the
+difference is the terms and not the plumbing.
+
+Scored on CAN-D's *own* metric — for each bit, is there a boundary to its
+right — the terms are recall rules that pay for it dearly:
+
+| cut rule | precision | recall | F-score |
+|---|---|---|---|
+| rate ratio only | **94%** | 51% | **0.660** |
+| + term 1 | 47% | 75% | 0.574 |
+| + term 2 | 38% | 65% | 0.481 |
+| + both | 37% | **79%** | 0.500 |
+
+They find half again as many boundaries and are wrong about most of them.
+Boundary recall was never the binding constraint here; whole-field precision
+is, and every extra wrong cut destroys two fields rather than one.
+
+The mismatch is structural, and the paper is clear about it if read closely.
+Algorithm 1 is a *classifier feeding an optimizer*, not a segmentation rule.
+Its output is consumed by CAN-D's Step 2, which re-decides every cut globally
+by balancing a cut penalty against the accumulated join penalties. The paper
+even names the binary output a drawback, because it "removes some of the
+flexibility" that step offers. Bolting the terms straight on as extra cut
+conditions, which is the only way to use them without also building Step 2,
+adds cuts with nothing to counterbalance them.
+
+Worth recording alongside: on that per-bit metric the existing rate-ratio rule
+scores 0.660, which is not a weak boundary detector. The difficulty canlens
+reports is almost entirely the whole-field requirement, not the cut rule.
+
 ### Boundaries several platforms agree on
 
 Volkswagen's MQB platform puts address 0x120 on a Golf, a Tiguan, an Audi Q3

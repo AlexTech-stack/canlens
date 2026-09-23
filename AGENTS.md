@@ -449,6 +449,14 @@ either side is wrong.
   the low fifties. It cannot invent a boundary, so recall is capped by `find_signals`. Widths
   are reported as `at least n bits` from the group's widest claim, which is still short 67% of
   the time and overshoots 13%. See `corroborate/boundaries.py`.
+- **A better cut rule is not a better field detector.** CAN-D's conditional-flip terms
+  (Algorithm 1) raise per-bit boundary recall from 51% to 79% and drop per-bit precision from
+  94% to 37%; as extra cut conditions they take whole-field F1 from 0.533 to 0.414. Every
+  wrong cut destroys two fields, not one, so boundary recall was never the binding constraint.
+  In CAN-D that heuristic feeds a global optimizer that re-decides each cut against a cut
+  penalty; used as a standalone rule it only adds cuts. Measured with and without constant-bit
+  removal. The existing rate-ratio rule scores 0.660 on the per-bit metric, so the cut rule is
+  not the weak part.
 - **Do not trust a timing claim you did not measure in this codebase.** Lazy attribute access
   across the pycapnp boundary made an early "0.02 s parse" claim wrong by two orders of
   magnitude.
