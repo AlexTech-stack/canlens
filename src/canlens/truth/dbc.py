@@ -31,6 +31,8 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
+from ..analyze.bits import big_endian_bits
+
 
 class FieldKind(str, Enum):
     """What a reference signal claims to be, as far as its name admits."""
@@ -96,15 +98,7 @@ def signal_bits(start: int, length: int, byte_order: str) -> tuple[int, ...]:
         return ()
     if byte_order == "little_endian":
         return tuple(range(start, start + length))
-    out: list[int] = []
-    byte, bit = divmod(start, 8)
-    for _ in range(length):
-        out.append(byte * 8 + bit)
-        if bit == 0:
-            byte, bit = byte + 1, 7
-        else:
-            bit -= 1
-    return tuple(out)
+    return big_endian_bits(start, length)
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -21,6 +21,7 @@ from ..analyze.bits import (
 )
 from ..decode import CanFrame, iter_frames, load_frames
 from ..decode.frameset import FrameSet, Message
+from .byteorder import find_signals_in
 from .checksums import (
     ChecksumHypothesis,
     find_checksums,
@@ -30,7 +31,7 @@ from .checksums import (
 from .counters import CounterHypothesis, find_counters
 from .crc16 import Crc16Hypothesis, find_crc16
 from .multiplex import MultiplexHypothesis, find_multiplexor
-from .signals import SignalHypothesis, find_signals
+from .signals import SignalHypothesis
 
 # How many payloads to materialise as bytes for the detectors that still read
 # them (the Data-ID solver reads 4, the CRC screen 64). Everything that scores
@@ -197,7 +198,14 @@ def _build(
         spoken_for.update(range(counter.start_bit, counter.end_bit))
     if multiplexor is not None:
         spoken_for.update(range(multiplexor.start_bit, multiplexor.end_bit))
-    signals = find_signals(matrix, claimed_bits=spoken_for, **kwargs.get("signal_options", {}))
+    # The bus's bit order, decided once for the whole bus by
+    # `infer.byteorder` and passed down. Intel unless something says otherwise.
+    signals = find_signals_in(
+        byte_matrix,
+        kwargs.get("signal_order", BitOrder.INTEL),
+        claimed_bits=spoken_for,
+        **kwargs.get("signal_options", {}),
+    )
 
     return MessageInference(
         bus=bus,
@@ -300,6 +308,63 @@ def infer_message_columnar(
     )
 
 
+def claimed_bits_of(inference: MessageInference) -> set[int]:
+    """Flat Intel positions every verified detector already explained."""
+    bits = set(explained_bytes_to_bits(inference.checksums, inference.crc16s))
+    for counter in inference.counters:
+        bits.update(range(counter.start_bit, counter.end_bit))
+    if inference.multiplexor is not None:
+        bits.update(range(inference.multiplexor.start_bit, inference.multiplexor.end_bit))
+    return bits
+
+
+def apply_bus_order(
+    found: list[MessageInference], byte_matrices: dict[tuple[int, int], np.ndarray]
+) -> list[MessageInference]:
+    """Decide each bus's bit order, then re-read signals where it is not Intel.
+
+    Two passes, because the decision needs the other detectors first: a
+    counter or a checksum must be excluded before long fields are counted, or
+    it would be mistaken for one in whichever order happens to fit it. The
+    first pass finds those, the decision follows, and only the signal pass is
+    redone -- checksums are arithmetic over bytes and do not move with bit
+    numbering.
+
+    A bus below `byteorder.MIN_MARGIN` is left as Intel, which is the default
+    and the thing to fall back to when the traffic will not say.
+    """
+    from .byteorder import decide_byte_order
+
+    claimed = {m.key: claimed_bits_of(m) for m in found}
+    decided = decide_byte_order(
+        [
+            (m.bus, byte_matrices[m.key], claimed[m.key])
+            for m in found
+            if m.key in byte_matrices
+        ]
+    )
+    motorola = {
+        bus
+        for bus, verdict in decided.items()
+        if verdict.decided and verdict.order is BitOrder.MOTOROLA
+    }
+    if not motorola:
+        return found
+    out = []
+    for message in found:
+        if message.bus in motorola and message.key in byte_matrices:
+            message = replace(
+                message,
+                signals=find_signals_in(
+                    byte_matrices[message.key],
+                    BitOrder.MOTOROLA,
+                    claimed_bits=claimed[message.key],
+                ),
+            )
+        out.append(message)
+    return out
+
+
 def infer_frameset(
     frames: FrameSet,
     *,
@@ -312,7 +377,8 @@ def infer_frameset(
     Pass the `TraceProfile` from `analyze_frameset` over the same frames and
     each message's bit profile is reused instead of measured again.
     """
-    return [
+    messages = list(frames.group(min_frames=min_frames))
+    found = [
         infer_message_columnar(
             message,
             order=order,
@@ -320,8 +386,11 @@ def infer_frameset(
             if profile is not None and message.key in profile.messages
             else None,
         )
-        for message in frames.group(min_frames=min_frames)
+        for message in messages
     ]
+    if order is not BitOrder.INTEL:
+        return found
+    return apply_bus_order(found, {m.key: m.bytes_matrix() for m in messages})
 
 
 def infer_frames(
@@ -342,7 +411,10 @@ def infer_frames(
     for frame in frames:
         payloads[(frame.bus, frame.address)].append(frame.data)
 
+    from .checksums import as_matrix
+
     results = []
+    matrices: dict[tuple[int, int], np.ndarray] = {}
     for (bus, address), blobs in payloads.items():
         if len(blobs) < min_frames:
             continue
@@ -352,7 +424,11 @@ def infer_frames(
         if len(same) < min_frames:
             continue
         results.append(infer_message(same, bus=bus, address=address, order=order))
-    return sorted(results, key=lambda m: (m.bus, m.address))
+        matrices[(bus, address)] = as_matrix(same)
+    results = sorted(results, key=lambda m: (m.bus, m.address))
+    if order is not BitOrder.INTEL:
+        return results
+    return apply_bus_order(results, matrices)
 
 
 def infer_segment(

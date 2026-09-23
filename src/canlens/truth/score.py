@@ -230,7 +230,7 @@ def claimed_fields(inference: MessageInference) -> dict[FieldKind, list[Claim]]:
         width = f"{signal.length}bit" if signal.bounded else f"{signal.length}+bit"
         out[FieldKind.SIGNAL].append(
             Claim(
-                tuple(range(signal.start_bit, signal.end_bit)),
+                signal.bits,
                 f"{width}@{signal.start_bit}",
                 exact=signal.bounded,
             )

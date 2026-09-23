@@ -741,10 +741,33 @@ from nothing at all to **13% and 23%**. Volkswagen platforms get *worse* under
 Motorola, as they must, and that is the control that says this measures the
 bus rather than flattering the detector.
 
-**What is not done yet.** `infer` still detects in Intel order regardless; the
-decision is reported, not yet applied. Wiring it in means carrying a byte
-order on every claim so that `truth`, `export` and the workbench all agree on
-what a `StartPos` means.
+**And it is applied.** `infer` decides the order per bus and re-reads signals
+on the buses that are not Intel, in two passes: the first finds counters,
+checksums and multiplexors, which must be excluded before long fields are
+counted, and only the signal pass is redone afterwards. Scored over the nine
+platform and DBC pairs:
+
+| platform | always Intel | bus order applied |
+|---|---|---|
+| Rivian R1 | 18% / 27% | **38% / 42%** |
+| Toyota Prius | 18% / 29% | **47% / 61%** |
+| every Intel platform | unchanged | unchanged |
+| **overall** | 51% / 50%, F1 0.504 | **54% / 52%, F1 0.533** |
+
+The six Volkswagen platforms and the Tesla come out byte for byte identical,
+which is the property that matters: a bus the traffic reads as Intel is left
+exactly as it was.
+
+A claim now carries its own `byte_order`, and `start_bit` means different
+things under each — the lowest bit under Intel, the *most* significant bit
+under Motorola, as a DBC `StartPos` does. Read positions from
+`SignalHypothesis.bits`, never from `range(start_bit, end_bit)`: a big-endian
+field is not contiguous in Intel numbering. `truth` and the PDU exporter both
+go through that property, and the exporter sets `ByteOrder` accordingly.
+
+Counters, checksums and multiplexors are left in Intel order deliberately.
+They are verified arithmetic over whole bytes, so bit numbering does not move
+them.
 
 One correction this measurement forced. The correlation between a DBC's
 big-endian share and canlens' score on it is real — the Prius and Rivian score

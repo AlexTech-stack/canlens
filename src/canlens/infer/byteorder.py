@@ -40,12 +40,12 @@ measuring the bus rather than flattering the detector.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
 from ..analyze.bits import BitOrder, bit_matrix_from_bytes
-from .signals import find_signals
+from .signals import SignalHypothesis, find_signals
 
 # A field this wide cannot fit inside one byte, so it can only be read as one
 # run in the order that is correct. Nine rather than eight because an 8-bit
@@ -160,3 +160,43 @@ def decide_byte_order(
         bus: BusOrder(bus=bus, intel=i, motorola=m, messages=n)
         for bus, (i, m, n) in sorted(tally.items())
     }
+
+
+def find_signals_in(
+    byte_matrix: np.ndarray,
+    order: BitOrder,
+    *,
+    claimed_bits: set[int] | frozenset[int] = frozenset(),
+    **options: object,
+) -> list[SignalHypothesis]:
+    """Detect signals in one message, reading it in the bus's bit order.
+
+    Only the signal pass moves. Counters, checksums and multiplexors are
+    verified arithmetic over bytes and are unaffected by bit numbering, so
+    they stay where they were found; `claimed_bits` arrives in Intel indices
+    either way and is mapped across for the Motorola pass.
+
+    A Motorola claim comes back labelled as a DBC big-endian field: its
+    `start_bit` is the *most* significant bit, which is the run's top column
+    mapped back, so `SignalHypothesis.bits` reproduces the wrapped positions.
+    """
+    if order is BitOrder.INTEL:
+        return find_signals(
+            bit_matrix_from_bytes(byte_matrix, BitOrder.INTEL),
+            claimed_bits=claimed_bits,
+            **options,  # type: ignore[arg-type]
+        )
+    width_bits = byte_matrix.shape[1] * 8
+    found = find_signals(
+        motorola_columns(byte_matrix),
+        claimed_bits={intel_to_column(b, width_bits) for b in claimed_bits},
+        **options,  # type: ignore[arg-type]
+    )
+    return [
+        replace(
+            hypothesis,
+            start_bit=to_intel_bit(hypothesis.end_bit - 1, width_bits),
+            byte_order=BitOrder.MOTOROLA,
+        )
+        for hypothesis in found
+    ]

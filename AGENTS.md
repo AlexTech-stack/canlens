@@ -228,8 +228,14 @@ them inflates every frequency, entropy and corroboration statistic built on top.
 ### 4.5 Intel bit order is the default and needs no translation
 
 A bit index produced by this codebase is already a DBC `StartPos`. `export/pdu_db.py` writes it
-straight through — **do not add a conversion.** `BitOrder.MOTOROLA` exists as a parameter and is
-never searched.
+straight through — **do not add a conversion.**
+
+`BitOrder.MOTOROLA` is no longer merely a parameter: `infer/byteorder.py` decides each bus's
+order from its own traffic and `apply_bus_order` re-reads signals on the buses that are not
+Intel. A `SignalHypothesis` therefore carries a `byte_order`, and **`start_bit` means different
+things under each**: the lowest bit under Intel, the *most* significant bit under Motorola, as a
+DBC `StartPos` does. Always take positions from `SignalHypothesis.bits`; a big-endian field is
+not contiguous in Intel numbering and `range(start_bit, end_bit)` claims the wrong bits.
 
 ### 4.6 Stay columnar
 
@@ -468,21 +474,10 @@ either side is wrong.
 - **Scaling and units.** No factor, offset or unit is ever inferred.
 - **Signals inside a multiplexed layout.** The selector is found and its per-value layouts are
   drawn, but no detector runs separately within each selector value.
-- **Motorola search.** The bus's bit order is now *decided* but not yet *applied*: run
-  `canlens infer byte-order <segment>` (`infer/byteorder.py`); detection itself still runs in
-  Intel order everywhere. Byte order is a property of the bus, not of a signal — across the 43
-  opendbc databases with 20+ signals the median share in the dominant order is 100%, and
-  assuming one order per bus costs a median of 0.00% of signals (mean 0.10%, 41 of 43 pay
-  nothing) because a single-byte field is the same bits under either convention and only a
-  minority-order field that *wraps* a byte is mishandled. The evidence is fields of 9 bits or
-  more, which cannot fit inside a byte and so read as one run only in the correct order: that
-  picks right on 8 of 9 buses, and below a 10% margin the bus is reported undecided rather
-  than guessed. Detecting in the decided order takes a Rivian from 2%/3% precision/recall to
-  14%/18% and a Prius from nothing to 13%/23%, while Volkswagen platforms get worse under
-  Motorola, which is the control. The mechanism: unpack MSB-first, then reverse the whole
-  vector end to end, which makes a big-endian field contiguous with its rate decaying upward
-  (verified on all 344 layouts). Plain MSB-first is not enough and fails quietly — the rate
-  climbs along the field and the cut rule fires inside it.
+- **Motorola for counters, checksums and multiplexors.** The bus's bit order is decided and
+  applied to *signal* detection only. Counters, checksums and multiplexors are verified
+  arithmetic over whole bytes, so bit numbering does not move them and their reported
+  `StartPos` remains Intel.
 - **Variable-length E2E.** Profiles 4 and 7 are claimed only where Length is fixed across the
   trace, which is the honest scope of the check.
 

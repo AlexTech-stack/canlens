@@ -101,6 +101,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ..analyze.bits import BitOrder, big_endian_bits
 from .counters import field_values
 
 # A bit must move at least this often to be part of a signal. Below it there is
@@ -137,10 +138,28 @@ class SignalHypothesis:
     # Whether something stops the field here, as opposed to it fading into
     # bits that never move. False means the width is a lower bound.
     bounded: bool = True
+    # The bus's bit order, which decides what `start_bit` means. Under INTEL
+    # it is the field's lowest bit and the field runs upward; under MOTOROLA
+    # it is the *most* significant bit, as a DBC `StartPos` does, and the
+    # field runs downward wrapping to bit 7 of the next byte.
+    byte_order: BitOrder = BitOrder.INTEL
 
     @property
     def end_bit(self) -> int:
+        """One past the last bit. Only meaningful for an Intel-order field."""
         return self.start_bit + self.length
+
+    @property
+    def bits(self) -> tuple[int, ...]:
+        """The flat Intel indices this field occupies, whatever its order.
+
+        Use this rather than `range(start_bit, end_bit)` anywhere the actual
+        positions matter: a big-endian field is not contiguous in Intel
+        numbering, and treating it as though it were claims the wrong bits.
+        """
+        if self.byte_order is BitOrder.INTEL:
+            return tuple(range(self.start_bit, self.start_bit + self.length))
+        return big_endian_bits(self.start_bit, self.length)
 
     @property
     def span(self) -> int:
@@ -148,8 +167,9 @@ class SignalHypothesis:
 
     def __str__(self) -> str:
         width = f"{self.length} bits" if self.bounded else f"{self.length}+ bits"
+        order = "" if self.byte_order is BitOrder.INTEL else " motorola"
         return (
-            f"signal @ bit {self.start_bit}, {width} "
+            f"signal @ bit {self.start_bit}{order}, {width} "
             f"(seen {self.minimum}..{self.maximum} over {self.frames} frames)"
         )
 

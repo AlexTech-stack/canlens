@@ -141,3 +141,56 @@ class TestDecide:
 def test_the_long_field_floor_exceeds_one_byte():
     """An 8-bit field on a byte boundary reads the same either way."""
     assert LONG_FIELD > 8
+
+
+class TestAppliedToDetection:
+    """The decided order has to reach the claims, not just the report."""
+
+    @staticmethod
+    def frames(big_endian, count=400):
+        from canlens.decode import CanFrame
+        payloads = ramp(n=count, big_endian=big_endian, start=7 if big_endian else 0)
+        return [
+            CanFrame(i * 10_000_000, 0, 0x210, bytes(payloads[i]), False)
+            for i in range(count)
+        ]
+
+    def test_a_big_endian_bus_yields_big_endian_claims(self):
+        from canlens.decode import from_frames
+        from canlens.infer import infer_frameset
+
+        found = infer_frameset(from_frames(self.frames(big_endian=True)))
+        signals = [s for m in found for s in m.signals]
+        assert signals, "no signal found at all"
+        assert all(s.byte_order is BitOrder.MOTOROLA for s in signals)
+
+    def test_a_little_endian_bus_is_left_alone(self):
+        from canlens.decode import from_frames
+        from canlens.infer import infer_frameset
+
+        found = infer_frameset(from_frames(self.frames(big_endian=False)))
+        signals = [s for m in found for s in m.signals]
+        assert signals and all(s.byte_order is BitOrder.INTEL for s in signals)
+
+    def test_a_big_endian_claim_reports_the_bits_it_actually_covers(self):
+        from canlens.decode import from_frames
+        from canlens.infer import infer_frameset
+
+        found = infer_frameset(from_frames(self.frames(big_endian=True)))
+        signal = next(s for m in found for s in m.signals)
+        assert len(signal.bits) == signal.length
+        # a wide big-endian field is not contiguous in Intel numbering
+        if signal.length > 8:
+            assert sorted(signal.bits) != list(range(min(signal.bits),
+                                                     max(signal.bits) + 1))
+
+    def test_both_inference_paths_still_agree(self):
+        from canlens.decode import from_frames
+        from canlens.infer import infer_frames, infer_frameset
+
+        objects = self.frames(big_endian=True)
+        a = infer_frameset(from_frames(objects))
+        b = infer_frames(iter(objects))
+        assert [(m.bus, m.address) for m in a] == [(m.bus, m.address) for m in b]
+        assert [[s.bits for s in m.signals] for m in a] == \
+               [[s.bits for s in m.signals] for m in b]

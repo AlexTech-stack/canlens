@@ -120,7 +120,10 @@ set exactly. They are dropped by default; only `decode.summarize()` counts them 
 Including them inflates every frequency, entropy and corroboration statistic downstream.
 
 **5. Intel bit order is the default, and a bit index is already a DBC `StartPos`.** No
-translation happens on export, by design. Motorola exists as a parameter and is never searched.
+translation happens on export, by design. Since a claim now carries its own `byte_order`, read
+its positions from `SignalHypothesis.bits` and never from `range(start_bit, end_bit)` — a
+big-endian field is *not* contiguous in Intel numbering, and a big-endian `start_bit` is the
+field's **most** significant bit, as a DBC `StartPos` is.
 
 **6. Stay columnar.** `FrameSet` holds the trace as arrays plus one flat payload blob.
 Rebuilding `CanFrame` objects costs ~0.7 s per segment and would cap a 95× cache at about 2×.
@@ -260,16 +263,12 @@ than the function under test. Prefer synthetic payloads with known ground truth 
 Say so plainly rather than implying otherwise:
 
 - **Scaling and units.** No factor, offset or unit is ever inferred.
+- **Motorola for counters, checksums and multiplexors.** The bus's bit order is decided and
+  applied to *signal* detection only (`infer/byteorder.py`). The others are verified arithmetic
+  over whole bytes, so bit numbering does not move them; their reported `StartPos` is still
+  Intel.
 - **Signals inside a multiplexed layout.** The selector is found and its layouts are drawn, but
   no detector runs separately within each selector value.
-- **Motorola search.** The bus's bit order is now *decided* (`canlens infer byte-order`,
-  `infer/byteorder.py`) but not yet *applied* — detection still runs in Intel order. Byte
-  order is a bus property, not a signal one: median 100% of a DBC's signals share its
-  dominant order, and assuming one order per bus costs a mean 0.10% of signals because
-  single-byte fields are the same bits either way. Long fields (9+ bits, which cannot fit in
-  a byte) pick the order right on 8 of 9 buses; below a 10% margin the bus is left undecided.
-  Wiring it into detection means carrying a byte order on every claim so `truth`, `export`
-  and the GUI agree on what a `StartPos` means.
 - **Variable-length E2E.** Profiles 4 and 7 are claimed only where Length is fixed across the
   trace.
 

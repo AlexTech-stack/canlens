@@ -15,6 +15,7 @@ from ..analyze import TraceProfile, analyze_frameset
 from ..analyze.bits import BitOrder, bit_entropy, bit_matrix, classify_bits, transition_rate
 from ..decode import load_frames
 from ..export import MessageEntry, SignalEntry
+from ..export.pdu_db import INTEL, MOTOROLA
 from ..filters import TraceFilter
 from ..infer import MessageInference, infer_cached
 from ..infer.counters import field_values, score_counter
@@ -316,12 +317,15 @@ class SegmentModel:
             )
         for signal in row.inference.signals:
             extent = "" if signal.bounded else " at least"
+            motorola = signal.byte_order is not BitOrder.INTEL
             out.append(
                 self._derived_entry(
                     index, "Signal", signal.start_bit, signal.length,
                     f"canlens:{extent} {signal.length} bits moving together, "
-                    f"seen {signal.minimum}..{signal.maximum} over {signal.frames} frames",
+                    f"seen {signal.minimum}..{signal.maximum} over {signal.frames} frames"
+                    f"{' (big-endian bus)' if motorola else ''}",
                     named,
+                    byte_order=MOTOROLA if motorola else INTEL,
                 )
             )
         for crc in row.inference.crc16s:
@@ -338,7 +342,7 @@ class SegmentModel:
 
     def _derived_entry(
         self, index: int, name: str, start: int, length: int, comment: str,
-        named: set[tuple[int, int]],
+        named: set[tuple[int, int]], byte_order: int = INTEL,
     ) -> SignalEntry | None:
         # A hand-given name wins: the user looked at it.
         if (start, length) in named:
@@ -348,6 +352,7 @@ class SegmentModel:
             name=name,
             start_bit=start,
             length=length,
+            byte_order=byte_order,
             minimum=float(values.min()) if values.size else 0.0,
             maximum=float(values.max()) if values.size else 0.0,
             init_value=float(values[0]) if values.size else 0.0,
