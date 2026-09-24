@@ -44,8 +44,15 @@ changed what an analysis could see.
   - [7.4 Pooling frames for signal boundaries](#74-pooling-frames-for-signal-boundaries)
   - [7.5 Agreement across platforms: the strongest ranking signal found](#75-agreement-across-platforms-the-strongest-ranking-signal-found)
 - [8. Ground truth: getting the reference right](#8-ground-truth-getting-the-reference-right)
-- [9. Open, and deliberately not attempted](#9-open-and-deliberately-not-attempted)
-- [10. Recurring lessons](#10-recurring-lessons)
+- [9. ISO-TP and UDS](#9-iso-tp-and-uds)
+  - [9.1 Adopted in principle: multi-frame ISO-TP verifies itself](#91-adopted-in-principle-multi-frame-iso-tp-verifies-itself)
+  - [9.2 A misreading this already causes](#92-a-misreading-this-already-causes)
+  - [9.3 Rejected: finding SingleFrames from the header](#93-rejected-finding-singleframes-from-the-header)
+  - [9.4 Adopted: validate the SingleFrame against the protocol](#94-adopted-validate-the-singleframe-against-the-protocol)
+  - [9.5 Where the residual false positives are, and the rule that separates them](#95-where-the-residual-false-positives-are-and-the-rule-that-separates-them)
+  - [9.6 The UDS layer, and what it would take](#96-the-uds-layer-and-what-it-would-take)
+- [10. Open, and deliberately not attempted](#10-open-and-deliberately-not-attempted)
+- [11. Recurring lessons](#11-recurring-lessons)
 
 ## How to read the numbers
 
@@ -832,7 +839,146 @@ confirms the E2E Profile 11 work.
 
 ---
 
-## 9. Open, and deliberately not attempted
+## 9. ISO-TP and UDS
+
+A diagnostic transport is not a vehicle signal, but it occupies the same
+payload bytes and the detectors here read it as one. It is also the one
+structure in a CAN trace that carries its own verification, which makes it a
+natural fit for this project's bar. Measured over all 803 local segments.
+
+### 9.1 Adopted in principle: multi-frame ISO-TP verifies itself
+
+ISO 15765-2:2016 segments a long message into a FirstFrame carrying a 12-bit
+FF_DL, then ConsecutiveFrames whose SequenceNumbers start at 1 and increment
+modulo 16 (9.6.3, 9.6.4). Both are checkable against the trace: the SN chain
+must be unbroken and the reassembled length must reach FF_DL.
+
+**22 401 complete reassemblies** across 223 `(bus, address)` pairs, in 379 of
+803 segments. The confirmation is independent of how they were found: the spec
+requires the receiver to answer a FirstFrame with a FlowControl frame before
+ConsecutiveFrames may flow, and **98%** of the reassemblies had a FlowControl
+from a peer address on the same bus while the FirstFrame was open — a fact the
+scanner never used as a criterion.
+
+| bus | address | messages | FC-backed | reading |
+|---|---|---|---|---|
+| 1 | `0x7E8` | 6227 | 100% | UDS response; replies `0x41` and `0x62` |
+| 1 | `0x7E0` | 2590 | 100% | UDS request; every one SID `0x22` |
+| 1 | `0x085` | 5972 | 100% | Toyota, FF_DL 144 |
+| 1 | `0x080` | 5966 | 100% | Toyota, FF_DL **740** — 106 CFs per message |
+
+Audi Q3 carries the most (7529 messages over 40 pairs); six Toyota platforms
+carry `0x080`/`0x085`.
+
+### 9.2 A misreading this already causes
+
+Toyota's `0x080` and `0x085` are reported today as
+`4-bit counter @ bit 0 (98.1%)`. That nibble is the ISO-TP SequenceNumber. The
+counter detector is not malfunctioning — an SN genuinely advances by one and
+wraps, at 98% — it is describing a *transport* artefact as a vehicle signal.
+Same class as the CRC-linearity phantom in §4: one field being a function of
+another. Nothing is currently excluded on this basis.
+
+### 9.3 Rejected: finding SingleFrames from the header
+
+A SingleFrame's entire header is one nibble — high nibble 0, low nibble a
+length ≤ CAN_DL − 1 — and ordinary traffic satisfies it constantly. Scanned
+without further constraint: **8 216 707** matches corpus-wide against 22 401
+genuine multi-frame messages. The service histogram from that scan is noise;
+it showed OBD-II services `0x01`–`0x0A` at 100k–277k hits each, which is
+simply messages whose byte 0 happens to fall in that range.
+
+**Restricting by address does not fix it**, which is worth recording because it
+is the obvious first move and it was measured:
+
+| endpoint set | addresses | messages | named service | share |
+|---|---|---|---|---|
+| ever sent a `0x3x` byte | 1800 | 5 418 313 | 2 034 226 | 38% |
+| proven + FlowControl peers | 1167 | 4 615 292 | 1 831 670 | 40% |
+| proven by an FF+CF chain | 223 | 1 772 287 | 804 975 | **45%** |
+
+45% on the strictest possible set. The sender's identity is not the evidence.
+
+### 9.4 Adopted: validate the SingleFrame against the protocol
+
+The frame has to be *consistent with its own SF_DL*, and the spec gives two
+mutually exclusive ways for that to hold (10.4.2.1, 10.4.2.2):
+
+- **padded** — DLC forced to 8, unused bytes filled with one repeated value.
+  The spec's default is `CC16`, chosen to minimise stuff-bit insertion;
+  `0x55`, `0xAA` and `0x00` occur in practice.
+- **optimised** — no padding, and then `CAN_DL` must equal `SF_DL + 1` exactly
+  (Table 12, normal addressing).
+
+Anything else drops the ISO-TP presumption. Per frame this rejects **77.4%** of
+what the header nibble admits (8 216 707 → 1 856 074). Applied to every frame
+of an address, with at least one frame carrying real padding so the check has
+something to bite on, it cuts **75 addresses to 26**.
+
+**It rediscovers the diagnostic address map on its own.** Told nothing about
+ISO 15765-4, the rule surfaced `0x720`–`0x723`, `0x7E0`, `0x7E1`, `0x7EA`,
+`0x7EE`, `0x737` and `0x582`. That is the independent confirmation, and it is
+what makes the rule credible rather than merely selective.
+
+**It is complementary to §9.1, not an alternative.** None of the 26 overlap the
+223 FF+CF-proven endpoints, because "every frame is a SingleFrame" excludes by
+construction any address that also sends FirstFrames. One test finds endpoints
+that segment, the other finds endpoints that only ever send short messages. A
+detector wants the union.
+
+### 9.5 Where the residual false positives are, and the rule that separates them
+
+`0x00` is the weakest padding value, being the commonest byte in ordinary CAN
+payloads. A second condition separates the set: **does SF_DL actually vary?** A
+real endpoint sends requests of different lengths, so the length nibble moves
+and the padding boundary moves with it. An ordinary periodic message whose
+byte 0 is a fixed small constant and whose tail is always zero satisfies the
+padding rule with a *frozen* SF_DL — a constant matching a constant, the same
+trap the checksum evidence bar exists for (§5.2).
+
+Of the 26 survivors: SF_DL varies on 9, padding is not only `0x00` on 6, and 4
+satisfy both. Cross-tabulated against the diagnostic address range:
+
+| | in `0x700`–`0x7FF` | outside | share diagnostic |
+|---|---|---|---|
+| SF_DL varies | 6 | 3 | 67% |
+| SF_DL frozen | 4 | 13 | 24% |
+
+The 13 frozen-and-outside are where the false positives live — `0x4D2`, `0x113`
+and `0x3EC` all sit at `SF_DL = 1` with six zero bytes behind it, which is an
+ordinary one-byte message, not a diagnostic request.
+
+**But a frozen SF_DL is not disproof**, and the counter-example is in the data:
+`0x737` sends 33 frames, all `SF_DL = 3`, padded with `0xCC` — spec-default
+padding in the diagnostic range. A TesterPresent heartbeat genuinely is one
+fixed-length message repeated forever. So variation is *positive evidence when
+present*, never a required condition, exactly like the `bounded` flag on
+signals (§2.1). Combining as "reject only `0x00`-padded **and** frozen" keeps 11
+of 26 and costs three likely-real endpoints (`0x720`–`0x723` on some buses).
+
+### 9.6 The UDS layer, and what it would take
+
+Once a message is reassembled, ISO 14229-1:2013 makes the service byte
+readable: a request carries the SID, a positive response carries SID + `0x40`,
+and a negative response is `0x7F <SID> <NRC>`. On the FF+CF-proven endpoints
+the services below the OBD-II noise floor are the shape of a real diagnostic
+session — `0x3D` WriteMemoryByAddress (36 197), `0x22` ReadDataByIdentifier
+(12 086), `0x10` DiagnosticSessionControl (7337), `0x11` ECUReset (7149).
+Those do not arise by coincidence the way `0x01`–`0x0A` do.
+
+So the UDS layer is reachable, but **only over messages the transport layer has
+already verified**. Reading service bytes off unverified frames reproduces the
+8.2-million-match failure of §9.3 one level up. The order is: reassemble,
+confirm, then interpret — and a service whose SID is unknown is still worth
+reporting as a request/response pair, since the `+0x40` relation is checkable
+without knowing what the service does.
+
+**Not built.** This section is a feasibility measurement, not a detector. What
+it establishes is that the multi-frame layer clears the bar in invariant 2
+comfortably, that the single-frame layer clears it with the padding rule plus a
+stated weakness, and that the two must be unioned rather than chosen between.
+
+## 10. Open, and deliberately not attempted
 
 Stated plainly rather than implied away.
 
@@ -849,6 +995,10 @@ Stated plainly rather than implied away.
   fields are not recovered.
 - **Variable-length E2E.** Profiles 4 and 7 are claimed only where Length is fixed
   across the trace.
+
+- **ISO-TP and UDS.** Measured and not built; see §9. Nothing in `infer/`
+  recognises a diagnostic transport, so its frames are read as ordinary
+  messages and its SequenceNumbers as counters.
 
 **Known gaps with evidence pointing at them:**
 
@@ -880,7 +1030,7 @@ and is called out as untested rather than as a result.
 
 ---
 
-## 10. Recurring lessons
+## 11. Recurring lessons
 
 Patterns that showed up more than once, worth having in mind before the next
 idea.
@@ -909,3 +1059,9 @@ idea.
    removed claims (§5.2, §6.2, §2.1).
 8. **Say which number the headline is.** Pooling an easy sub-problem into a hard
    problem's metric moves the metric without moving the hard problem (§6.4).
+9. **A transport layer is not a vehicle signal**, and it does not announce
+   itself. An ISO-TP SequenceNumber passes the counter test at 98% because it
+   really is a counter; what is wrong is the layer it is attributed to. Where a
+   protocol carries its own verification — an SN chain, a length that must be
+   reached, a FlowControl that must answer — use it, and do not accept a header
+   nibble as a substitute (§9).
