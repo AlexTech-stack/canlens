@@ -296,7 +296,8 @@ than the function under test. Prefer synthetic payloads with known ground truth 
   of accidental FirstFrames and completes one or two, which is how VW's `0x101` was reported
   as an endpoint on 2 of ~200. Per address the distribution is bimodal with nothing between
   25% and 50%, so floors of 0.25, 0.50 and 0.75 all keep the same 49 addresses and 21209
-  transfers at 100% FlowControl backing.
+  transfers at 100% FlowControl backing. That calibration pools an address across segments;
+  applied per segment, as inference is, the corpus yields 9 endpoints and 20823 transfers.
 - **6 physical cores, 12 logical.** `default_jobs()` returns physical cores on purpose; the
   second thread of a core adds nothing to numpy-bound work.
 

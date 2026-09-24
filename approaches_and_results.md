@@ -861,9 +861,9 @@ ConsecutiveFrames may flow, and **98%** of the reassemblies had a FlowControl
 from a peer address on the same bus while the FirstFrame was open — a fact the
 scanner never used as a criterion.
 
-Those are the numbers *before* an evidence bar, and 174 of the 223 do not
-survive one; see §9.7. The shipped detector reports **21 209 transfers over 49
-pairs, 100% FlowControl-backed**.
+Those are the numbers *before* an evidence bar, and most do not survive one;
+see §9.7. The shipped detector, applying the bar per segment, reports **9
+endpoints over 803 segments and 20 823 transfers, 100% FlowControl-backed**.
 
 | bus | address | messages | FC-backed | reading |
 |---|---|---|---|---|
@@ -1006,6 +1006,13 @@ addresses and 21 209 transfers, at 100% backing. `MIN_MATCH_RATE = 0.5` sits
 mid-plateau. A second completion is also required (`MIN_MESSAGES = 2`), which
 costs 33 addresses carrying one transfer each and takes backing from 99% to
 100%.
+
+Those calibration figures pool each address across every segment it appears in.
+The detector applies the same bar **per segment**, which is stricter and is the
+right place for it — an address must earn its claim within one recording, and
+agreement between recordings is what §7 exists for. Run that way the corpus
+yields 9 endpoints and 20 823 transfers, so the per-segment bar costs 386
+transfers that were only ever provable by pooling.
 
 The lesson generalises past ISO-TP: **a structure that reassembles is not
 thereby verified.** What verifies it is the rate at which it reassembles when

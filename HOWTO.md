@@ -1188,7 +1188,9 @@ opens hundreds of accidental FirstFrames and completes one or two — VW's `0x10
 was reported as an endpoint on 2 of about 200 before this floor existed. Per
 address the distribution is bimodal with nothing between 25% and 50%, so the
 floor is a plateau: 0.25, 0.50 and 0.75 all keep the same 49 addresses and 21209
-transfers. `MIN_MATCH_RATE` is 0.5.
+transfers. `MIN_MATCH_RATE` is 0.5. Those figures pool an address across
+segments; the detector applies the bar per segment, which over the corpus gives
+9 endpoints and 20823 transfers, all FlowControl-backed.
 
 A verified transfer also **withdraws the counter its SequenceNumber looked like**.
 Toyota's `0x080` and `0x085` were reported as 4-bit counters at 98%, which is

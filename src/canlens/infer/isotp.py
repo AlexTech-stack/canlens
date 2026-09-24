@@ -31,13 +31,19 @@ plausible service bytes only from 38% to 45%. Single frames need a padding
 check against ISO 15765-2:2016 10.4.2, which is a separate detector and is not
 built here.
 
-**What this finds, in the corpus.** 21209 transfers over 49 (bus, address)
-pairs, every one of them FlowControl-backed, including the standard diagnostic
-pair -- 0x7E0 sending nothing but SID 0x22 and 0x7E8 answering 0x62 -- and
-Toyota's 0x080 carrying FF_DL 740 in chains of 106 ConsecutiveFrames. Without
-the match-rate floor the same walk reports 22401 transfers over 223 pairs, and
-the extra 174 addresses are ordinary messages that opened hundreds of
-accidental FirstFrames and completed one or two.
+**What this finds, in the corpus.** Run per segment, as inference here always
+is: **9 endpoints over 803 segments, 21 of which carry one, and 20823
+transfers, every one FlowControl-backed**, with payloads from 8 to 740 bytes.
+Among them the standard diagnostic pair -- 0x7E0 sending nothing but SID 0x22
+and 0x7E8 answering 0x62 -- and Toyota's 0x080 carrying FF_DL 740 in chains of
+106 ConsecutiveFrames.
+
+The floor was calibrated on figures pooled per address *across* segments, where
+it keeps 49 addresses and 21209 transfers against 223 and 22401 without it.
+Applying it per segment is stricter and is the right place for it: an address
+needs its evidence within one recording, and agreement between recordings is
+what :mod:`canlens.corroborate` is for. The difference is 386 transfers spread
+thinly enough that no single segment could check them.
 
 A transport is not a vehicle signal, and this module exists partly to say so.
 An ISO-TP SequenceNumber advances by one and wraps, so the counter detector
