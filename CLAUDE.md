@@ -53,7 +53,7 @@ Run all three before claiming anything is done:
 ./.venv/bin/ruff check . && ./.venv/bin/mypy src && ./.venv/bin/pytest -q
 ```
 
-886 tests, about 17 seconds, no corpus data required — the suite runs on synthetic payloads
+914 tests, about 17 seconds, no corpus data required — the suite runs on synthetic payloads
 with known ground truth.
 
 **Never pipe a gate command into `tail`/`head` without checking `PIPESTATUS`.** Doing so masked
@@ -288,6 +288,15 @@ than the function under test. Prefer synthetic payloads with known ground truth 
   consume whole bytes and never touch bit numbering. Only signals were ever wrong, being the
   only fields wide enough to cross a byte. Residual exposure: a counter spanning a byte on a
   Motorola bus, which is 2 of 598 over a nine-platform sample.
+- **An ISO-TP SequenceNumber is a counter, and it is not a vehicle signal.** A segmented
+  transport advances a nibble by one and wraps, so the counter detector reported Toyota's
+  `0x080` and `0x085` as 4-bit counters at 98%: the arithmetic is right and the layer is wrong.
+  `infer/isotp.py` reassembles the transfers and withdraws the claim. The constant that makes
+  it work is the match rate, not the reassembly — an ordinary high-rate message opens hundreds
+  of accidental FirstFrames and completes one or two, which is how VW's `0x101` was reported
+  as an endpoint on 2 of ~200. Per address the distribution is bimodal with nothing between
+  25% and 50%, so floors of 0.25, 0.50 and 0.75 all keep the same 49 addresses and 21209
+  transfers at 100% FlowControl backing.
 - **6 physical cores, 12 logical.** `default_jobs()` returns physical cores on purpose; the
   second thread of a core adds nothing to numpy-bound work.
 

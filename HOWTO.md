@@ -1167,6 +1167,40 @@ deliberately left out of this: it counts long fields over the verified
 detectors alone, and adding layout bits there moved the verdict on 2 of 176
 buses, which is a calibrated threshold and not a collision fix's business.
 
+**Segmented ISO-TP transfers** are reassembled and reported per address. This is
+the one detector that cannot work on a message's columns: a segmented transfer
+is a sequence of frames, and the evidence for it is the order they arrive in, so
+it runs over the trace in time order before anything is grouped.
+
+What is checked is what ISO 15765-2:2016 requires. A FirstFrame carries a 12-bit
+FF_DL; the ConsecutiveFrames that follow must have SequenceNumbers running 1, 2,
+3 … wrapping at 15, and the bytes must reach the promised length. A wrong
+SequenceNumber aborts the transfer, as 9.6.4.4 says a receiver must do.
+
+The corroboration is deliberately kept out of the criteria. The spec requires
+the receiver to answer a FirstFrame with a FlowControl before ConsecutiveFrames
+may flow, so that is recorded rather than required — which leaves it free to act
+as an independent check. Over the corpus it backs 100% of what is reported.
+
+The constant that matters is not the reassembly but the **match rate**: the share
+of FirstFrames that reached their promised length. An ordinary high-rate message
+opens hundreds of accidental FirstFrames and completes one or two — VW's `0x101`
+was reported as an endpoint on 2 of about 200 before this floor existed. Per
+address the distribution is bimodal with nothing between 25% and 50%, so the
+floor is a plateau: 0.25, 0.50 and 0.75 all keep the same 49 addresses and 21209
+transfers. `MIN_MATCH_RATE` is 0.5.
+
+A verified transfer also **withdraws the counter its SequenceNumber looked like**.
+Toyota's `0x080` and `0x085` were reported as 4-bit counters at 98%, which is
+true arithmetic about the wrong layer; `apply_isotp` drops counters lying wholly
+inside the PCI byte on an address with a verified transfer, the same way
+`outside_checksums` drops one inside a byte a CRC explains.
+
+Only *segmented* transfers are found. A SingleFrame's whole header is one nibble
+and ordinary traffic matches it 8216707 times corpus-wide; recovering those needs
+the padding check in 10.4.2, which is measured in `approaches_and_results.md` and
+not built. No UDS service byte is interpreted.
+
 **Checksums** are only reported when a named algorithm *reproduces* the byte.
 The library is `sum8`, `sum8_complement`, `xor8`, `sum8_addr`,
 `sum8_addr_len`, Honda's

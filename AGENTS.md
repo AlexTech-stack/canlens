@@ -83,7 +83,7 @@ It is gitignored and **must stay that way**. The upstream bucket is about 299 GB
 ./.venv/bin/ruff check . && ./.venv/bin/mypy src && ./.venv/bin/pytest -q
 ```
 
-886 tests, about 17 seconds. **No corpus data is required** — the suite runs on synthetic
+914 tests, about 17 seconds. **No corpus data is required** — the suite runs on synthetic
 payloads with known ground truth.
 
 ### 2.5 The pipe trap — read this, it has bitten this project three times
@@ -160,6 +160,7 @@ fetching data never drags in a compiler toolchain. Do not add a third-party impo
 | Change what a selector value selects | `infer/layouts.py` |
 | Change signal boundary detection | `infer/signals.py` |
 | Change the signal precision filter | `infer/smoothness.py` |
+| Change segmented-transport detection | `infer/isotp.py` |
 | Change bit classification thresholds | `analyze/bits.py` |
 | Change cadence classification | `analyze/timing.py` |
 | Change cross-segment tiering | `corroborate/consensus.py` |
@@ -416,6 +417,15 @@ either side is wrong.
   with different contents. What distinguishes a real selector is that it runs on a *schedule* —
   each value revisited at a steady interval with no long absence. Requiring that removed the
   large majority of early false positives.
+- **An ISO-TP SequenceNumber is a counter, and it is not a vehicle signal.** A segmented
+  transport advances a nibble by one and wraps, so the counter detector reported Toyota's
+  `0x080` and `0x085` as 4-bit counters at 98%: the arithmetic is right and the layer is wrong.
+  `infer/isotp.py` reassembles the transfers and withdraws the claim. The constant that makes
+  it work is the match rate, not the reassembly — an ordinary high-rate message opens hundreds
+  of accidental FirstFrames and completes one or two, which is how VW's `0x101` was reported
+  as an endpoint on 2 of ~200. Per address the distribution is bimodal with nothing between
+  25% and 50%, so floors of 0.25, 0.50 and 0.75 all keep the same 49 addresses and 21209
+  transfers at 100% FlowControl backing.
 - **The machine has 6 physical cores and 12 logical.** `default_jobs()` in `cli.py` returns
   physical cores deliberately; the second thread of a core adds nothing to numpy-bound work.
 - **Reasoning about what a DBC "would name" is not evidence; scoring against one is.** The
@@ -507,6 +517,10 @@ either side is wrong.
 ## 9. Not implemented — say so plainly
 
 - **Scaling and units.** No factor, offset or unit is ever inferred.
+- **ISO-TP SingleFrames, and UDS.** Only *segmented* transfers are detected
+  (`infer/isotp.py`). A SingleFrame's whole header is one nibble and ordinary traffic matches
+  it 8216707 times corpus-wide; recovering those needs the padding check in ISO 15765-2:2016
+  10.4.2, which is measured but not built. No service byte is ever interpreted.
 - **Signals inside a multiplexed layout.** The selector is found, its per-value layouts are
   drawn, and the whole-byte constant each value selects is read (`infer/layouts.py`), but no
   *signal* detector runs within a selector value: the moving content is narrow state fields,

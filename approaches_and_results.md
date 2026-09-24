@@ -51,6 +51,7 @@ changed what an analysis could see.
   - [9.4 Adopted: validate the SingleFrame against the protocol](#94-adopted-validate-the-singleframe-against-the-protocol)
   - [9.5 Where the residual false positives are, and the rule that separates them](#95-where-the-residual-false-positives-are-and-the-rule-that-separates-them)
   - [9.6 The UDS layer, and what it would take](#96-the-uds-layer-and-what-it-would-take)
+  - [9.7 The constant that decides it is the match rate, not the reassembly](#97-the-constant-that-decides-it-is-the-match-rate-not-the-reassembly)
 - [10. Open, and deliberately not attempted](#10-open-and-deliberately-not-attempted)
 - [11. Recurring lessons](#11-recurring-lessons)
 
@@ -860,6 +861,10 @@ ConsecutiveFrames may flow, and **98%** of the reassemblies had a FlowControl
 from a peer address on the same bus while the FirstFrame was open — a fact the
 scanner never used as a criterion.
 
+Those are the numbers *before* an evidence bar, and 174 of the 223 do not
+survive one; see §9.7. The shipped detector reports **21 209 transfers over 49
+pairs, 100% FlowControl-backed**.
+
 | bus | address | messages | FC-backed | reading |
 |---|---|---|---|---|
 | 1 | `0x7E8` | 6227 | 100% | UDS response; replies `0x41` and `0x62` |
@@ -973,10 +978,38 @@ confirm, then interpret — and a service whose SID is unknown is still worth
 reporting as a request/response pair, since the `+0x40` relation is checkable
 without knowing what the service does.
 
-**Not built.** This section is a feasibility measurement, not a detector. What
-it establishes is that the multi-frame layer clears the bar in invariant 2
-comfortably, that the single-frame layer clears it with the padding rule plus a
-stated weakness, and that the two must be unioned rather than chosen between.
+**Built for the multi-frame layer only** (`infer/isotp.py`); the single-frame
+and UDS layers remain measured and unbuilt.
+
+### 9.7 The constant that decides it is the match rate, not the reassembly
+
+Reassembly alone is not an evidence bar, and the first build of the detector
+proved it by reporting VW's `0x101` as an endpoint. That address is an ordinary
+high-rate message whose byte 0 opens roughly 200 accidental FirstFrames in a
+segment and completes two of them — and it even picked up a FlowControl
+"answer" from a 29-bit address on an 11-bit conversation.
+
+The fix is the number every other detector here already carries: the share of
+FirstFrames that reached their promised length. Per address over 803 segments,
+using FlowControl backing as the independent check:
+
+| match rate | addresses | transfers | FC-backed |
+|---|---|---|---|
+| 0–5% | 137 | 1141 | 68% |
+| 5–25% | 4 | 18 | 83% |
+| 50–90% | 2 | 8 | 100% |
+| **100%** | **80** | **21 234** | **99%** |
+
+The distribution is bimodal with **nothing between 25% and 50%**, so the floor
+is a plateau rather than a knife edge: 0.25, 0.50 and 0.75 all keep the same 49
+addresses and 21 209 transfers, at 100% backing. `MIN_MATCH_RATE = 0.5` sits
+mid-plateau. A second completion is also required (`MIN_MESSAGES = 2`), which
+costs 33 addresses carrying one transfer each and takes backing from 99% to
+100%.
+
+The lesson generalises past ISO-TP: **a structure that reassembles is not
+thereby verified.** What verifies it is the rate at which it reassembles when
+it says it will, measured against everything else the same address does.
 
 ## 10. Open, and deliberately not attempted
 
@@ -995,10 +1028,9 @@ Stated plainly rather than implied away.
   fields are not recovered.
 - **Variable-length E2E.** Profiles 4 and 7 are claimed only where Length is fixed
   across the trace.
-
-- **ISO-TP and UDS.** Measured and not built; see §9. Nothing in `infer/`
-  recognises a diagnostic transport, so its frames are read as ordinary
-  messages and its SequenceNumbers as counters.
+- **ISO-TP SingleFrames, and the UDS layer.** The segmented transport is built
+  (`infer/isotp.py`, §9) and withdraws the counters it explains. SingleFrames
+  and service bytes are measured and unbuilt; see §9.4 and §9.6.
 
 **Known gaps with evidence pointing at them:**
 

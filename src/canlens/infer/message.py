@@ -30,6 +30,7 @@ from .checksums import (
 )
 from .counters import CounterHypothesis, find_counters
 from .crc16 import Crc16Hypothesis, find_crc16
+from .isotp import IsotpHypothesis, find_isotp, ordered_frames, transport_bits
 from .layouts import LayoutField, read_layout_fields
 from .multiplex import MultiplexHypothesis, find_multiplexor
 from .signals import SignalHypothesis
@@ -73,6 +74,9 @@ class MessageInference:
     multiplexor: MultiplexHypothesis | None = None
     layout_fields: list[LayoutField] = field(default_factory=list)
     signals: list[SignalHypothesis] = field(default_factory=list)
+    # Set by `apply_isotp`, not by `_build`: a segmented transfer is a
+    # sequence across frames and cannot be seen in one message's columns.
+    isotp: IsotpHypothesis | None = None
 
     @property
     def key(self) -> tuple[int, int]:
@@ -87,6 +91,7 @@ class MessageInference:
             or self.multiplexor
             or self.layout_fields
             or self.signals
+            or self.isotp
         )
 
     def __str__(self) -> str:
@@ -395,6 +400,48 @@ def apply_bus_order(
     return out
 
 
+def apply_isotp(
+    found: list[MessageInference],
+    frames: Iterable[tuple[int, int, int, bytes]],
+) -> list[MessageInference]:
+    """Attach verified ISO-TP transfers, and withdraw what they explain.
+
+    Runs outside `_build` because a segmented transfer is a sequence across
+    frames rather than a pattern in one message's columns, so it needs the
+    trace in time order before anything is grouped.
+
+    A verified transfer explains the PCI byte, and that matters rather than
+    being bookkeeping: an ISO-TP SequenceNumber advances by one and wraps, so
+    the counter detector reports Toyota's 0x080 and 0x085 as 4-bit counters at
+    98%. The arithmetic is right and the layer is wrong. Counters lying wholly
+    inside the PCI byte are dropped on an address with a verified transfer, the
+    same way `outside_checksums` drops a counter inside a byte a CRC explains.
+    Nothing else is touched: the remaining bytes are ordinary payload.
+    """
+    conversations = find_isotp(frames)
+    if not conversations:
+        return found
+    out = []
+    for message in found:
+        hypothesis = conversations.get(message.key)
+        if hypothesis is None:
+            out.append(message)
+            continue
+        spoken_for = transport_bits(hypothesis)
+        out.append(
+            replace(
+                message,
+                isotp=hypothesis,
+                counters=[
+                    counter
+                    for counter in message.counters
+                    if not spoken_for.issuperset(range(counter.start_bit, counter.end_bit))
+                ],
+            )
+        )
+    return out
+
+
 def infer_frameset(
     frames: FrameSet,
     *,
@@ -419,8 +466,9 @@ def infer_frameset(
         for message in messages
     ]
     if order is not BitOrder.INTEL:
-        return found
-    return apply_bus_order(found, {m.key: m.bytes_matrix() for m in messages})
+        return apply_isotp(found, ordered_frames(frames))
+    found = apply_bus_order(found, {m.key: m.bytes_matrix() for m in messages})
+    return apply_isotp(found, ordered_frames(frames))
 
 
 def infer_frames(
@@ -438,8 +486,17 @@ def infer_frames(
         return infer_frameset(frames, order=order, min_frames=min_frames)
 
     payloads: dict[tuple[int, int], list[bytes]] = defaultdict(list)
+    # The transport pass needs the stream in time order and before any
+    # grouping, so it is collected in the same walk rather than by asking the
+    # caller for the iterable twice -- it may be a one-shot iterator.
+    ordered: list[tuple[int, int, int, bytes]] = []
     for frame in frames:
         payloads[(frame.bus, frame.address)].append(frame.data)
+        if not frame.echo:  # invariant 4, but only for the transport pass:
+            # grouping keeps whatever the caller handed over, and the columnar
+            # path does the same, so filtering here would split the two.
+            ordered.append((frame.mono_ns, frame.bus, frame.address, frame.data))
+    ordered.sort(key=lambda row: row[0])
 
     from .checksums import as_matrix
 
@@ -457,8 +514,9 @@ def infer_frames(
         matrices[(bus, address)] = as_matrix(same)
     results = sorted(results, key=lambda m: (m.bus, m.address))
     if order is not BitOrder.INTEL:
-        return results
-    return apply_bus_order(results, matrices)
+        return apply_isotp(results, ordered)
+    results = apply_bus_order(results, matrices)
+    return apply_isotp(results, ordered)
 
 
 def infer_segment(

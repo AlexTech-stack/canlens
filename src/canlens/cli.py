@@ -178,7 +178,8 @@ def cmd_infer_trace(args) -> int:
         f"{sum(len(m.crc16s) for m in hits)} 16-bit CRCs, "
         f"{sum(m.multiplexor is not None for m in hits)} multiplexors, "
         f"{sum(len(m.layout_fields) for m in hits)} layout fields, "
-        f"{sum(len(m.signals) for m in hits)} signals"
+        f"{sum(len(m.signals) for m in hits)} signals, "
+        f"{sum(m.isotp is not None for m in hits)} ISO-TP endpoints"
     )
     if not hits:
         return 0
@@ -194,6 +195,10 @@ def cmd_infer_trace(args) -> int:
             mux = m.multiplexor
             counters = ", ".join(
                 filter(None, [f"mux {mux.length}bit@{mux.start_bit} x{len(mux.values)}", counters])
+            )
+        if m.isotp is not None:
+            counters = ", ".join(
+                filter(None, [f"iso-tp x{m.isotp.messages}", counters])
             )
         checks = ", ".join(
             [
@@ -298,6 +303,22 @@ def cmd_infer_message(args) -> int:
             if fields:
                 shown = ", ".join(f"b{f.start_bit // 8}={f.value}" for f in fields)
                 print(f"           layout {value:>3}: {shown}")
+    if result.isotp is not None:
+        tp = result.isotp
+        lengths = tp.lengths
+        span = (f"{lengths[0]}" if len(lengths) == 1
+                else f"{lengths[0]}-{lengths[-1]}")
+        print(f"\n  iso-tp   {tp.messages} segmented transfers of {span} bytes, "
+              f"from {tp.started} FirstFrames")
+        print(f"           {bar(tp.match_rate)} {tp.match_rate:.1%} of FirstFrames "
+              f"reached their promised length")
+        print(f"           {bar(tp.flow_control_rate)} {tp.flow_control_rate:.1%} "
+              f"answered by a peer FlowControl")
+        if tp.peers:
+            peers = ", ".join(f"0x{p:03X}" for p in tp.peers[:4])
+            print(f"           peers: {peers}")
+        for transfer in tp.transfers[:3]:
+            print(f"           {transfer}")
     for c in result.counters:
         values = field_values(matrix, c.start_bit, c.length).tolist()
         print(f"\n  counter  {c.length} bits @ bit {c.start_bit}, step {c.stride}, "
